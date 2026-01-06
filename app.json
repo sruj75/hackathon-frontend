@@ -1,27 +1,51 @@
 {
   "expo": {
-    "name": "hackathon-intentive",
+    "name": "Intentive",
     "slug": "hackathon-intentive",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "icon": "./assets/images/icon.png",
+    "scheme": "intentive",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true,
+      "bitcode": false,
       "googleServicesFile": "./GoogleService-Info.plist",
       "bundleIdentifier": "life.intentive.expo",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "NSMicrophoneUsageDescription": "This app uses the microphone so you can talk to the voice assistant.",
+        "NSCameraUsageDescription": "Camera access is used for optional video features.",
+        "NSBluetoothAlwaysUsageDescription": "Bluetooth is used for connecting to audio devices.",
+        "ITSAppUsesNonExemptEncryption": true,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "life.intentive.expo",
+      "permissions": [
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH"
+      ],
+      "softwareKeyboardLayoutMode": "pan"
+    },
     "plugins": [
+      "expo-router",
       "@react-native-firebase/app",
+      "@livekit/react-native-expo-plugin",
+      "@config-plugins/react-native-webrtc",
       [
         "expo-build-properties",
         {
@@ -30,9 +54,24 @@
           }
         }
       ],
-      "expo-audio"
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      "expo-font"
     ],
+    "experiments": {
+      "typedRoutes": true
+    },
     "extra": {
+      "router": {
+        "origin": false
+      },
       "eas": {
         "projectId": "c4e705ec-1671-4e31-ba01-43d1bc1234c7"
       }
