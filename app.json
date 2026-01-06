@@ -11,7 +11,6 @@
     "ios": {
       "supportsTablet": true,
       "bitcode": false,
-      "googleServicesFile": "./GoogleService-Info.plist",
       "bundleIdentifier": "life.intentive.expo",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app uses the microphone so you can talk to the voice assistant.",
@@ -43,7 +42,6 @@
     },
     "plugins": [
       "expo-router",
-      "@react-native-firebase/app",
       "@livekit/react-native-expo-plugin",
       "@config-plugins/react-native-webrtc",
       [

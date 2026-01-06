@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "13.0.0",
-    "@react-native-firebase/app": "^21.6.1",
     "@expo/vector-icons": "^15.0.3",
     "@livekit/react-native": "^2.9.0",
     "@livekit/react-native-expo-plugin": "^1.0.1",
