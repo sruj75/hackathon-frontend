@@ -8,10 +8,6 @@ import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { registerGlobals } from '@livekit/react-native';
-
-// Do required setup for LiveKit React-Native
-registerGlobals();
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();

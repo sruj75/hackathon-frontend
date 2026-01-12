@@ -1,5 +1,3 @@
-import { Transcription } from '@/hooks/useDataStreamTranscriptions';
-import { useLocalParticipant } from '@livekit/react-native';
 import { useCallback } from 'react';
 import {
   ListRenderItemInfo,
@@ -12,39 +10,51 @@ import {
 } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 
+// Simple transcription type for WebSocket mode
+export interface Transcription {
+  participant: string;
+  text: string;
+  timestamp: number;
+}
+
 export type ChatLogProps = {
   style: StyleProp<ViewStyle>;
   transcriptions: Transcription[];
 };
-export default function ChatLog({ style, transcriptions }: ChatLogProps) {
-  const { localParticipant } = useLocalParticipant();
-  const localParticipantIdentity = localParticipant.identity;
 
+export default function ChatLog({ style, transcriptions }: ChatLogProps) {
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<Transcription>) => {
-      const isLocalUser = item.identity === localParticipantIdentity;
-      if (isLocalUser) {
-        return <UserTranscriptionText text={item.segment.text} />;
+      // Check if it's the agent or user
+      const isAgent = item.participant.toLowerCase().includes('agent') ||
+        item.participant === 'Agent';
+
+      if (isAgent) {
+        return <AgentTranscriptionText text={item.text} />;
       } else {
-        return <AgentTranscriptionText text={item.segment.text} />;
+        return <UserTranscriptionText text={item.text} />;
       }
     },
-    [localParticipantIdentity]
+    []
   );
+
+  // Reverse the list so newest items appear at bottom (with inverted list, they show on top)
+  const reversedTranscriptions = [...transcriptions].reverse();
 
   return (
     <Animated.FlatList
       renderItem={renderItem}
-      data={transcriptions}
+      data={reversedTranscriptions}
       style={style}
       inverted={true}
       itemLayoutAnimation={LinearTransition}
+      keyExtractor={(item, index) => `${item.timestamp}-${index}`}
     />
   );
 }
 
 const UserTranscriptionText = (props: { text: string }) => {
-  let { text } = props;
+  const { text } = props;
   const colorScheme = useColorScheme();
   const themeStyle =
     colorScheme === 'light'
@@ -54,25 +64,26 @@ const UserTranscriptionText = (props: { text: string }) => {
     colorScheme === 'light' ? styles.lightThemeText : styles.darkThemeText;
 
   return (
-    text && (
+    text ? (
       <View style={styles.userTranscriptionContainer}>
         <Text style={[styles.userTranscription, themeStyle, themeTextStyle]}>
           {text}
         </Text>
       </View>
-    )
+    ) : null
   );
 };
 
 const AgentTranscriptionText = (props: { text: string }) => {
-  let { text } = props;
+  const { text } = props;
   const colorScheme = useColorScheme();
   const themeTextStyle =
     colorScheme === 'light' ? styles.lightThemeText : styles.darkThemeText;
+
   return (
-    text && (
+    text ? (
       <Text style={[styles.agentTranscription, themeTextStyle]}>{text}</Text>
-    )
+    ) : null
   );
 };
 
@@ -96,7 +107,6 @@ const styles = StyleSheet.create({
   userTranscriptionDark: {
     backgroundColor: '#131313',
   },
-
   agentTranscription: {
     fontSize: 17,
     textAlign: 'left',

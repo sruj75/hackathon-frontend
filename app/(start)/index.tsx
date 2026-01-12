@@ -1,6 +1,5 @@
-import { ConnectionDetails, fetchToken } from '@/hooks/useConnectionDetails';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -12,41 +11,27 @@ import {
 
 export default function StartScreen() {
   const router = useRouter();
+  const [isConnecting, setConnecting] = useState(false);
 
-  let [isConnecting, setConnecting] = useState(false);
-  let [connectionDetails, setConnectionDetails] = useState<
-    ConnectionDetails | undefined
-  >(undefined);
+  const handleConnect = () => {
+    setConnecting(true);
 
-  // Fetch token when we're connecting.
-  useEffect(() => {
-    if (isConnecting) {
-      fetchToken().then((details) => {
-        console.log(details);
-        setConnectionDetails(details);
-        if (!details) {
-          setConnecting(false);
-        }
-      });
-    }
-  }, [isConnecting]);
-
-  // Navigate to Assistant screen when we have the connection details.
-  useEffect(() => {
-    if (isConnecting && connectionDetails) {
+    // Check if backend URL is configured
+    const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+    if (!backendUrl) {
+      console.error('EXPO_PUBLIC_BACKEND_URL not configured');
       setConnecting(false);
-      setConnectionDetails(undefined);
-      router.navigate('../assistant');
+      return;
     }
-  }, [isConnecting, router, connectionDetails]);
 
-  let connectText: string;
+    // Navigate to assistant screen - connection happens there
+    setTimeout(() => {
+      setConnecting(false);
+      router.navigate('../assistant');
+    }, 500);
+  };
 
-  if (isConnecting) {
-    connectText = 'Connecting';
-  } else {
-    connectText = 'Start Voice Assistant';
-  }
+  const connectText = isConnecting ? 'Connecting' : 'Start Voice Assistant';
 
   return (
     <View style={styles.container}>
@@ -57,12 +42,10 @@ export default function StartScreen() {
       <Text style={styles.text}>Chat live with your voice AI agent</Text>
 
       <TouchableOpacity
-        onPress={() => {
-          setConnecting(true);
-        }}
+        onPress={handleConnect}
         style={styles.button}
         activeOpacity={0.7}
-        disabled={isConnecting} // Disable button while loading
+        disabled={isConnecting}
       >
         {isConnecting ? (
           <ActivityIndicator
@@ -104,7 +87,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 200, // Ensure button has a minimum width when loading
+    minWidth: 200,
   },
   buttonText: {
     color: '#ffffff',

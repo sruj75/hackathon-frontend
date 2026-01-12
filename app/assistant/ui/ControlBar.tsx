@@ -1,6 +1,4 @@
-import { TrackReference, useLocalParticipant } from '@livekit/react-native';
-import { BarVisualizer } from '@livekit/react-native';
-import { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ViewStyle,
   StyleSheet,
@@ -8,6 +6,7 @@ import {
   Image,
   TouchableOpacity,
   StyleProp,
+  Animated,
 } from 'react-native';
 
 type ControlBarProps = {
@@ -25,35 +24,78 @@ type ControlBarOptions = {
   onExitClick: () => void;
 };
 
-export default function ControlBar({ style = {}, options }: ControlBarProps) {
-  const { microphoneTrack, localParticipant } = useLocalParticipant();
-  const [trackRef, setTrackRef] = useState<TrackReference | undefined>(
-    undefined
+// Simple animated mic visualizer
+const MicVisualizer = ({ isActive }: { isActive: boolean }) => {
+  const [bars] = useState(() =>
+    Array.from({ length: 3 }, () => new Animated.Value(0.3))
   );
 
   useEffect(() => {
-    if (microphoneTrack) {
-      setTrackRef({
-        participant: localParticipant,
-        publication: microphoneTrack,
-        source: microphoneTrack.source,
-      });
+    if (isActive) {
+      const animateBars = () => {
+        const animations = bars.map((bar) =>
+          Animated.sequence([
+            Animated.timing(bar, {
+              toValue: 0.3 + Math.random() * 0.7,
+              duration: 100 + Math.random() * 100,
+              useNativeDriver: false,
+            }),
+            Animated.timing(bar, {
+              toValue: 0.3,
+              duration: 100 + Math.random() * 100,
+              useNativeDriver: false,
+            }),
+          ])
+        );
+        Animated.parallel(animations).start(({ finished }) => {
+          if (finished && isActive) animateBars();
+        });
+      };
+      animateBars();
     } else {
-      setTrackRef(undefined);
+      bars.forEach(bar => {
+        Animated.timing(bar, {
+          toValue: 0.3,
+          duration: 150,
+          useNativeDriver: false,
+        }).start();
+      });
     }
-  }, [microphoneTrack, localParticipant]);
+  }, [isActive, bars]);
 
+  return (
+    <View style={styles.micVisualizer}>
+      {bars.map((height, index) => (
+        <Animated.View
+          key={index}
+          style={[
+            styles.micBar,
+            {
+              height: height.interpolate({
+                inputRange: [0, 1],
+                outputRange: ['0%', '100%'],
+              }),
+              backgroundColor: isActive ? '#00FF00' : '#CCCCCC',
+            },
+          ]}
+        />
+      ))}
+    </View>
+  );
+};
+
+export default function ControlBar({ style = {}, options }: ControlBarProps) {
   // Images
-  let micImage = options.isMicEnabled
+  const micImage = options.isMicEnabled
     ? require('@/assets/images/mic_24dp.png')
     : require('@/assets/images/mic_off_24dp.png');
-  let cameraImage = options.isCameraEnabled
+  const cameraImage = options.isCameraEnabled
     ? require('@/assets/images/videocam_24dp.png')
     : require('@/assets/images/videocam_off_24dp.png');
-  let chatImage = options.isChatEnabled
+  const chatImage = options.isChatEnabled
     ? require('@/assets/images/chat_24dp.png')
     : require('@/assets/images/chat_off_24dp.png');
-  let exitImage = require('@/assets/images/call_end_24dp.png');
+  const exitImage = require('@/assets/images/call_end_24dp.png');
 
   return (
     <View style={[style, styles.container]}>
@@ -66,16 +108,7 @@ export default function ControlBar({ style = {}, options }: ControlBarProps) {
         onPress={() => options.onMicClick()}
       >
         <Image style={styles.icon} source={micImage} />
-        <BarVisualizer
-          barCount={3}
-          trackRef={trackRef}
-          style={styles.micVisualizer}
-          options={{
-            minHeight: 0.1,
-            barColor: '#CCCCCC',
-            barWidth: 2,
-          }}
-        />
+        <MicVisualizer isActive={options.isMicEnabled} />
       </TouchableOpacity>
 
       <TouchableOpacity
@@ -139,5 +172,13 @@ const styles = StyleSheet.create({
   micVisualizer: {
     width: 20,
     height: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  micBar: {
+    width: 3,
+    borderRadius: 2,
   },
 });

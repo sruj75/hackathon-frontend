@@ -8,191 +8,204 @@ import {
 } from 'react-native';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  AudioSession,
-  LiveKitRoom,
-  useIOSAudioManagement,
-  useLocalParticipant,
-  useParticipantTracks,
-  useRoomContext,
-  VideoTrack,
-} from '@livekit/react-native';
-import { useConnectionDetails } from '@/hooks/useConnectionDetails';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import ControlBar from './ui/ControlBar';
 import ChatBar from './ui/ChatBar';
 import ChatLog from './ui/ChatLog';
 import AgentVisualization from './ui/AgentVisualization';
-import useDataStreamTranscriptions from '@/hooks/useDataStreamTranscriptions';
-import { Track } from 'livekit-client';
+import { useWebSocketAgent, ADKEvent } from '@/hooks/useWebSocketAgent';
+import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
+
+// Generate unique IDs for this session
+const userId = `user-${Date.now()}`;
+const sessionId = `session-${Date.now()}`;
+
+interface Transcription {
+  participant: string;
+  text: string;
+  timestamp: number;
+}
 
 export default function AssistantScreen() {
-  // Start the audio session first.
-  useEffect(() => {
-    let start = async () => {
-      await AudioSession.startAudioSession();
-    };
+  const router = useRouter();
 
-    start();
+  // WebSocket connection
+  const {
+    state: wsState,
+    connect,
+    disconnect,
+    sendAudio,
+    sendText,
+    onEvent,
+    onAudio,
+  } = useWebSocketAgent(userId, sessionId);
+
+  // Audio recording and playback
+  const { isRecording, startRecording, stopRecording, onAudioData } = useAudioRecording();
+  const { isPlaying, playAudio, stopPlayback } = useAudioPlayback();
+
+  // UI State
+  const [isMicEnabled, setIsMicEnabled] = useState(false);
+  const [isChatEnabled, setChatEnabled] = useState(false);
+  const [chatMessage, setChatMessage] = useState('');
+  const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
+
+  // Connect on mount
+  useEffect(() => {
+    connect();
     return () => {
-      AudioSession.stopAudioSession();
+      disconnect();
     };
+  }, [connect, disconnect]);
+
+  // Set up audio data callback - send recorded audio to WebSocket
+  useEffect(() => {
+    onAudioData((data) => {
+      if (wsState.isConnected) {
+        sendAudio(data);
+      }
+    });
+  }, [onAudioData, sendAudio, wsState.isConnected]);
+
+  // Set up audio playback callback - play audio received from server
+  useEffect(() => {
+    onAudio((audioData) => {
+      playAudio(audioData);
+    });
+  }, [onAudio, playAudio]);
+
+  // Handle ADK events (transcriptions, responses)
+  useEffect(() => {
+    onEvent((event: ADKEvent) => {
+      // Handle input transcription (user speech)
+      if (event.serverContent?.inputTranscription?.text) {
+        addTranscription(userId, event.serverContent.inputTranscription.text);
+      }
+
+      // Handle output transcription (agent speech)
+      if (event.serverContent?.outputTranscription?.text) {
+        addTranscription('Agent', event.serverContent.outputTranscription.text);
+      }
+
+      // Handle text responses
+      if (event.content?.parts) {
+        for (const part of event.content.parts) {
+          if (part.text) {
+            addTranscription('Agent', part.text);
+          }
+        }
+      }
+    });
+  }, [onEvent]);
+
+  const addTranscription = useCallback((participant: string, text: string) => {
+    setTranscriptions((prev) => [
+      ...prev,
+      { participant, text, timestamp: Date.now() },
+    ]);
   }, []);
 
-  const connectionDetails = useConnectionDetails();
+  // Control callbacks
+  const onMicClick = useCallback(async () => {
+    if (isRecording) {
+      await stopRecording();
+      setIsMicEnabled(false);
+    } else {
+      await startRecording();
+      setIsMicEnabled(true);
+    }
+  }, [isRecording, startRecording, stopRecording]);
+
+  const onChatClick = useCallback(() => {
+    setChatEnabled(!isChatEnabled);
+  }, [isChatEnabled]);
+
+  const onExitClick = useCallback(() => {
+    disconnect();
+    stopPlayback();
+    router.back();
+  }, [router, disconnect, stopPlayback]);
+
+  const onChatSend = useCallback(
+    (message: string) => {
+      addTranscription(userId, message);
+      sendText(message);
+      setChatMessage('');
+    },
+    [sendText, addTranscription]
+  );
+
+  // Layout positioning
+  const [containerWidth, setContainerWidth] = useState(Dimensions.get('window').width);
+  const [containerHeight, setContainerHeight] = useState(Dimensions.get('window').height);
+
+  const agentVisualizationPosition = useAgentVisualizationPosition(
+    isChatEnabled,
+    false // No local video in WebSocket mode
+  );
 
   return (
-    <SafeAreaView>
-      <LiveKitRoom
-        serverUrl={connectionDetails?.url}
-        token={connectionDetails?.token}
-        connect={true}
-        audio={true}
-        video={false}
+    <SafeAreaView style={styles.safeArea}>
+      <View
+        style={styles.container}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          setContainerWidth(width);
+          setContainerHeight(height);
+        }}
       >
-        <RoomView />
-      </LiveKitRoom>
+        <View style={styles.spacer} />
+        <ChatLog
+          style={styles.logContainer}
+          transcriptions={transcriptions}
+        />
+        <ChatBar
+          style={styles.chatBar}
+          value={chatMessage}
+          onChangeText={(value) => setChatMessage(value)}
+          onChatSend={onChatSend}
+        />
+
+        <Animated.View
+          style={[
+            {
+              position: 'absolute',
+              zIndex: 1,
+              backgroundColor: '#000000',
+              ...agentVisualizationPosition,
+            },
+          ]}
+        >
+          <AgentVisualization
+            style={styles.agentVisualization}
+            isConnected={wsState.isConnected}
+            isPlaying={isPlaying}
+          />
+        </Animated.View>
+
+        <ControlBar
+          style={styles.controlBar}
+          options={{
+            isMicEnabled,
+            isCameraEnabled: false,
+            isChatEnabled,
+            onMicClick,
+            onCameraClick: () => { }, // No camera in WebSocket mode
+            onChatClick,
+            onExitClick,
+          }}
+        />
+      </View>
     </SafeAreaView>
   );
 }
 
-const RoomView = () => {
-  const router = useRouter();
-
-  const room = useRoomContext();
-  useIOSAudioManagement(room, true);
-
-  const {
-    isMicrophoneEnabled,
-    isCameraEnabled,
-    cameraTrack: localCameraTrack,
-    localParticipant,
-  } = useLocalParticipant();
-  const localParticipantIdentity = localParticipant.identity;
-
-  const localVideoTrack =
-    localCameraTrack && isCameraEnabled
-      ? {
-          participant: localParticipant,
-          publication: localCameraTrack,
-          source: Track.Source.Camera,
-        }
-      : null;
-
-  // Transcriptions
-  const transcriptionState = useDataStreamTranscriptions();
-  const addTranscription = transcriptionState.addTranscription;
-  const [isChatEnabled, setChatEnabled] = useState(false);
-  const [chatMessage, setChatMessage] = useState('');
-
-  const onChatSend = useCallback(
-    (message: string) => {
-      addTranscription(localParticipantIdentity, message);
-      setChatMessage('');
-    },
-    [localParticipantIdentity, addTranscription, setChatMessage]
-  );
-
-  // Control callbacks
-  const onMicClick = useCallback(() => {
-    localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
-  }, [isMicrophoneEnabled, localParticipant]);
-  const onCameraClick = useCallback(() => {
-    localParticipant.setCameraEnabled(!isCameraEnabled);
-  }, [isCameraEnabled, localParticipant]);
-  const onChatClick = useCallback(() => {
-    setChatEnabled(!isChatEnabled);
-  }, [isChatEnabled, setChatEnabled]);
-  const onExitClick = useCallback(() => {
-    router.back();
-  }, [router]);
-
-  // Layout positioning
-  const [containerWidth, setContainerWidth] = useState(
-    Dimensions.get('window').width
-  );
-  const [containerHeight, setContainerHeight] = useState(
-    Dimensions.get('window').height
-  );
-  const agentVisualizationPosition = useAgentVisualizationPosition(
-    isChatEnabled,
-    isCameraEnabled
-  );
-  const localVideoPosition = useLocalVideoPosition(isChatEnabled, {
-    width: containerWidth,
-    height: containerHeight,
-  });
-
-  let localVideoView = localVideoTrack ? (
-    <Animated.View
-      style={[
-        {
-          position: 'absolute',
-          zIndex: 1,
-          ...localVideoPosition,
-        },
-      ]}
-    >
-      <VideoTrack trackRef={localVideoTrack} style={styles.video} />
-    </Animated.View>
-  ) : null;
-
-  return (
-    <View
-      style={styles.container}
-      onLayout={(event) => {
-        const { width, height } = event.nativeEvent.layout;
-        setContainerWidth(width);
-        setContainerHeight(height);
-      }}
-    >
-      <View style={styles.spacer} />
-      <ChatLog
-        style={styles.logContainer}
-        transcriptions={transcriptionState.transcriptions}
-      />
-      <ChatBar
-        style={styles.chatBar}
-        value={chatMessage}
-        onChangeText={(value) => {
-          setChatMessage(value);
-        }}
-        onChatSend={onChatSend}
-      />
-
-      <Animated.View
-        style={[
-          {
-            position: 'absolute',
-            zIndex: 1,
-            backgroundColor: '#000000',
-            ...agentVisualizationPosition,
-          },
-        ]}
-      >
-        <AgentVisualization style={styles.agentVisualization} />
-      </Animated.View>
-
-      {localVideoView}
-
-      <ControlBar
-        style={styles.controlBar}
-        options={{
-          isMicEnabled: isMicrophoneEnabled,
-          isCameraEnabled,
-          isChatEnabled,
-          onMicClick,
-          onCameraClick,
-          onChatClick,
-          onExitClick,
-        }}
-      />
-    </View>
-  );
-};
-
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
   container: {
     width: '100%',
     height: '100%',
@@ -220,10 +233,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 8,
   },
-  video: {
-    width: '100%',
-    height: '100%',
-  },
   agentVisualization: {
     width: '100%',
     height: '100%',
@@ -232,32 +241,24 @@ const styles = StyleSheet.create({
 
 const expandedAgentWidth = 1;
 const expandedAgentHeight = 1;
-const expandedLocalWidth = 0.3;
-const expandedLocalHeight = 0.2;
 const collapsedWidth = 0.3;
 const collapsedHeight = 0.2;
 
-const createAnimConfig = (toValue: any) => {
-  return {
-    toValue,
-    stiffness: 200,
-    damping: 30,
-    useNativeDriver: false,
-    isInteraction: false,
-    overshootClamping: true,
-  };
-};
+const createAnimConfig = (toValue: any) => ({
+  toValue,
+  stiffness: 200,
+  damping: 30,
+  useNativeDriver: false,
+  isInteraction: false,
+  overshootClamping: true,
+});
 
 const useAgentVisualizationPosition = (
   isChatVisible: boolean,
-  hasLocalVideo: boolean
+  _hasLocalVideo: boolean
 ) => {
-  const width = useAnimatedValue(
-    isChatVisible ? collapsedWidth : expandedAgentWidth
-  );
-  const height = useAnimatedValue(
-    isChatVisible ? collapsedHeight : expandedAgentHeight
-  );
+  const width = useAnimatedValue(isChatVisible ? collapsedWidth : expandedAgentWidth);
+  const height = useAnimatedValue(isChatVisible ? collapsedHeight : expandedAgentHeight);
 
   useEffect(() => {
     const widthAnim = Animated.spring(
@@ -280,23 +281,14 @@ const useAgentVisualizationPosition = (
 
   const x = useAnimatedValue(0);
   const y = useAnimatedValue(0);
-  useEffect(() => {
-    let targetX: number;
-    let targetY: number;
 
-    if (!isChatVisible) {
-      targetX = 0;
-      targetY = 0;
-    } else {
-      if (!hasLocalVideo) {
-        // Just agent visualizer showing in top section.
-        targetX = 0.5 - collapsedWidth / 2;
-        targetY = 16;
-      } else {
-        // Handle agent visualizer showing next to local video.
-        targetX = 0.32 - collapsedWidth / 2;
-        targetY = 16;
-      }
+  useEffect(() => {
+    let targetX = 0;
+    let targetY = 0;
+
+    if (isChatVisible) {
+      targetX = 0.5 - collapsedWidth / 2;
+      targetY = 16;
     }
 
     const xAnim = Animated.spring(x, createAnimConfig(targetX));
@@ -309,14 +301,14 @@ const useAgentVisualizationPosition = (
       xAnim.stop();
       yAnim.stop();
     };
-  }, [x, y, isChatVisible, hasLocalVideo]);
+  }, [x, y, isChatVisible]);
 
   return {
     left: x.interpolate({
       inputRange: [0, 1],
       outputRange: ['0%', '100%'],
     }),
-    top: y, // y is defined in pixels
+    top: y,
     width: width.interpolate({
       inputRange: [0, 1],
       outputRange: ['0%', '100%'],
@@ -325,81 +317,5 @@ const useAgentVisualizationPosition = (
       inputRange: [0, 1],
       outputRange: ['0%', '100%'],
     }),
-  };
-};
-
-const useLocalVideoPosition = (
-  isChatVisible: boolean,
-  containerDimens: { width: number; height: number }
-): ViewStyle => {
-  const width = useAnimatedValue(
-    isChatVisible ? collapsedWidth : expandedLocalWidth
-  );
-  const height = useAnimatedValue(
-    isChatVisible ? collapsedHeight : expandedLocalHeight
-  );
-
-  useEffect(() => {
-    const widthAnim = Animated.spring(
-      width,
-      createAnimConfig(isChatVisible ? collapsedWidth : expandedLocalWidth)
-    );
-    const heightAnim = Animated.spring(
-      height,
-      createAnimConfig(isChatVisible ? collapsedHeight : expandedLocalHeight)
-    );
-
-    widthAnim.start();
-    heightAnim.start();
-
-    return () => {
-      widthAnim.stop();
-      heightAnim.stop();
-    };
-  }, [width, height, isChatVisible]);
-
-  const x = useAnimatedValue(0);
-  const y = useAnimatedValue(0);
-  useEffect(() => {
-    let targetX: number;
-    let targetY: number;
-
-    if (!isChatVisible) {
-      targetX = 1 - expandedLocalWidth - 16 / containerDimens.width;
-      targetY = 1 - expandedLocalHeight - 106 / containerDimens.height;
-    } else {
-      // Handle agent visualizer showing next to local video.
-      targetX = 0.66 - collapsedWidth / 2;
-      targetY = 0; // marginTop handles this.
-    }
-
-    const xAnim = Animated.spring(x, createAnimConfig(targetX));
-    const yAnim = Animated.spring(y, createAnimConfig(targetY));
-    xAnim.start();
-    yAnim.start();
-    return () => {
-      xAnim.stop();
-      yAnim.stop();
-    };
-  }, [containerDimens.width, containerDimens.height, x, y, isChatVisible]);
-
-  return {
-    left: x.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['0%', '100%'],
-    }),
-    top: y.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['0%', '100%'],
-    }),
-    width: width.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['0%', '100%'],
-    }),
-    height: height.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['0%', '100%'],
-    }),
-    marginTop: 16,
   };
 };
