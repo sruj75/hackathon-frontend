@@ -104,13 +104,16 @@ export function useWebSocketAgent(
           // JSON event from server
           try {
             const parsed = JSON.parse(event.data) as ADKEvent;
-            
+
             // Check for audio data in the event
             if (parsed.content?.parts) {
               for (const part of parsed.content.parts) {
                 if (part.inlineData?.mimeType?.includes('audio')) {
                   // Decode base64 audio and send to callback
-                  const binaryString = atob(part.inlineData.data);
+                  let base64 = part.inlineData.data;
+                  // Fix URL-safe base64 and remove whitespace
+                  base64 = base64.replace(/-/g, '+').replace(/_/g, '/').replace(/\s/g, '');
+                  const binaryString = atob(base64);
                   const bytes = new Uint8Array(binaryString.length);
                   for (let i = 0; i < binaryString.length; i++) {
                     bytes[i] = binaryString.charCodeAt(i);
@@ -119,7 +122,7 @@ export function useWebSocketAgent(
                 }
               }
             }
-            
+
             eventCallbackRef.current?.(parsed);
           } catch (e) {
             console.error('Failed to parse WebSocket message:', e);

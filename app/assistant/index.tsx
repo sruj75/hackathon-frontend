@@ -59,10 +59,27 @@ export default function AssistantScreen() {
     };
   }, [connect, disconnect]);
 
-  // Set up audio data callback - send recorded audio to WebSocket
+  // Auto-start recording when WebSocket connects for real-time streaming
+  const hasAutoStartedRef = React.useRef(false);
+  useEffect(() => {
+    if (wsState.isConnected && !isRecording && !hasAutoStartedRef.current) {
+      console.log('Auto-starting real-time recording...');
+      startRecording()
+        .then(() => {
+          setIsMicEnabled(true);
+          hasAutoStartedRef.current = true;
+          console.log('Real-time audio streaming active');
+        })
+        .catch((err) => console.error('Failed to start recording:', err));
+    }
+  }, [wsState.isConnected, isRecording, startRecording]);
+
+  // Set up audio data callback - stream audio chunks to WebSocket in real-time
   useEffect(() => {
     onAudioData((data) => {
       if (wsState.isConnected) {
+        // Log periodically to avoid spam
+        console.log(`Streaming audio chunk: ${data.byteLength} bytes`);
         sendAudio(data);
       }
     });

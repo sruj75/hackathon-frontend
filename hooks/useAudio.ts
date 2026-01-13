@@ -1,11 +1,6 @@
-import { useCallback, useRef, useState } from 'react';
-import { Audio } from 'expo-av';
-import { Platform } from 'react-native';
-
-/**
- * Audio recording hook using expo-av.
- * Records audio in PCM format for streaming to the ADK backend.
- */
+import { useCallback, useRef, useState, useEffect } from 'react';
+import LiveAudioStream from 'react-native-live-audio-stream';
+import { Audio, InterruptionModeIOS } from 'expo-av';
 
 export interface UseAudioRecordingReturn {
     isRecording: boolean;
@@ -16,90 +11,63 @@ export interface UseAudioRecordingReturn {
 
 export function useAudioRecording(): UseAudioRecordingReturn {
     const [isRecording, setIsRecording] = useState(false);
-    const recordingRef = useRef<Audio.Recording | null>(null);
     const audioDataCallbackRef = useRef<((data: ArrayBuffer) => void) | null>(null);
 
-    const requestPermissions = useCallback(async () => {
-        const permission = await Audio.requestPermissionsAsync();
-        if (permission.status !== 'granted') {
-            throw new Error('Audio recording permission not granted');
-        }
-
-        await Audio.setAudioModeAsync({
-            allowsRecordingIOS: true,
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: true,
-            playThroughEarpieceAndroid: false,
+    useEffect(() => {
+        // Initialize the audio stream
+        LiveAudioStream.init({
+            sampleRate: 16000,
+            channels: 1,
+            bitsPerSample: 16,
+            audioSource: 6, // VOICE_RECOGNITION on Android
+            bufferSize: 4096,
+            wavFile: 'audio.wav', // Required prop, but we use the stream
         });
+
+        LiveAudioStream.on('data', (data: string) => {
+            if (audioDataCallbackRef.current) {
+                // data is base64 encoded PCM 16-bit
+                const binaryString = atob(data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                audioDataCallbackRef.current(bytes.buffer);
+            }
+        });
+
+        return () => {
+            LiveAudioStream.stop();
+        };
     }, []);
 
     const startRecording = useCallback(async () => {
         try {
-            await requestPermissions();
-
-            // Create recording with PCM settings
-            const { recording } = await Audio.Recording.createAsync({
-                isMeteringEnabled: true,
-                android: {
-                    extension: '.wav',
-                    outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-                    audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
-                    sampleRate: 16000,
-                    numberOfChannels: 1,
-                    bitRate: 256000,
-                },
-                ios: {
-                    extension: '.wav',
-                    outputFormat: Audio.IOSOutputFormat.LINEARPCM,
-                    audioQuality: Audio.IOSAudioQuality.HIGH,
-                    sampleRate: 16000,
-                    numberOfChannels: 1,
-                    bitRate: 256000,
-                    linearPCMBitDepth: 16,
-                    linearPCMIsBigEndian: false,
-                    linearPCMIsFloat: false,
-                },
-                web: {
-                    mimeType: 'audio/webm',
-                    bitsPerSecond: 128000,
-                },
-            });
-
-            recordingRef.current = recording;
-            setIsRecording(true);
-            console.log('Recording started');
-        } catch (error) {
-            console.error('Failed to start recording:', error);
-            throw error;
-        }
-    }, [requestPermissions]);
-
-    const stopRecording = useCallback(async () => {
-        if (!recordingRef.current) {
-            return;
-        }
-
-        try {
-            await recordingRef.current.stopAndUnloadAsync();
-            const uri = recordingRef.current.getURI();
-            console.log('Recording stopped, URI:', uri);
-
-            if (uri && audioDataCallbackRef.current) {
-                // Read the recorded file and send to callback
-                const response = await fetch(uri);
-                const blob = await response.blob();
-                const arrayBuffer = await blob.arrayBuffer();
-                audioDataCallbackRef.current(arrayBuffer);
+            // Check permissions using expo-av (since LiveAudioStream doesn't expose permission check)
+            // Or just trust the app has them from usage description
+            const { status } = await Audio.requestPermissionsAsync();
+            if (status !== 'granted') {
+                throw new Error('Microphone permission not granted');
             }
 
-            recordingRef.current = null;
-            setIsRecording(false);
+            LiveAudioStream.start();
+            setIsRecording(true);
+            console.log('Real-time audio streaming started (react-native-live-audio-stream)');
         } catch (error) {
-            console.error('Failed to stop recording:', error);
-            recordingRef.current = null;
+            console.error('Failed to start recording:', error);
             setIsRecording(false);
             throw error;
         }
+    }, []);
+
+    const stopRecording = useCallback(async () => {
+        try {
+            LiveAudioStream.stop();
+            console.log('Recording stopped');
+        } catch (error) {
+            console.error('Failed to stop recording:', error);
+        }
+        setIsRecording(false);
     }, []);
 
     const onAudioData = useCallback((callback: (data: ArrayBuffer) => void) => {
@@ -114,11 +82,6 @@ export function useAudioRecording(): UseAudioRecordingReturn {
     };
 }
 
-/**
- * Audio playback hook using expo-av.
- * Plays audio chunks received from the ADK backend.
- */
-
 export interface UseAudioPlaybackReturn {
     isPlaying: boolean;
     playAudio: (audioData: ArrayBuffer, mimeType?: string) => Promise<void>;
@@ -126,22 +89,34 @@ export interface UseAudioPlaybackReturn {
 }
 
 export function useAudioPlayback(): UseAudioPlaybackReturn {
+    // Re-enabling playback logic delicately
     const [isPlaying, setIsPlaying] = useState(false);
     const soundRef = useRef<Audio.Sound | null>(null);
     const audioQueueRef = useRef<ArrayBuffer[]>([]);
     const isProcessingRef = useRef(false);
 
     const setupAudioMode = useCallback(async () => {
-        await Audio.setAudioModeAsync({
-            allowsRecordingIOS: false,
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: true,
-            playThroughEarpieceAndroid: false,
-        });
+        try {
+            // Configure audio mode ONCE for simultaneous recording and playback
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: true, // critical: don't kill the mic
+                playsInSilentModeIOS: true,
+                staysActiveInBackground: true,
+                interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+                shouldDuckAndroid: true,
+                playThroughEarpieceAndroid: false,
+            });
+        } catch (error) {
+            console.error('Failed to set audio mode:', error);
+        }
     }, []);
 
+    useEffect(() => {
+        setupAudioMode();
+    }, [setupAudioMode]);
+
     const processQueue = useCallback(async () => {
-        if (isProcessingRef.current || audioQueueRef.current.length === 0) {
+        if (isProcessingRef.current) {
             return;
         }
 
@@ -149,17 +124,37 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
         setIsPlaying(true);
 
         while (audioQueueRef.current.length > 0) {
-            const audioData = audioQueueRef.current.shift();
-            if (!audioData) continue;
+            // Batching Strategy: Take ALL currently available chunks
+            // This prevents creating a tiny sound for every 4KB (85ms) chunk
+            const chunksToPlay = [...audioQueueRef.current];
+            audioQueueRef.current = [];
+
+            if (chunksToPlay.length === 0) continue;
+
+            const totalSize = chunksToPlay.reduce((acc, chunk) => acc + chunk.byteLength, 0);
+
+            // Merge chunks
+            const mergedBuffer = new Uint8Array(totalSize);
+            let offset = 0;
+            for (const chunk of chunksToPlay) {
+                mergedBuffer.set(new Uint8Array(chunk), offset);
+                offset += chunk.byteLength;
+            }
 
             try {
-                await setupAudioMode();
+                // Create WAV header for the merged PCM data (24kHz, 1ch, 16bit)
+                const wavHeader = createWavHeader(totalSize, 24000, 1, 16);
 
-                // Convert ArrayBuffer to base64 data URI
-                const uint8Array = new Uint8Array(audioData);
+                // Concatenate header and merged data
+                const wavData = new Uint8Array(wavHeader.byteLength + totalSize);
+                wavData.set(wavHeader);
+                wavData.set(mergedBuffer, wavHeader.byteLength);
+
+                // Convert to base64
                 let binary = '';
-                for (let i = 0; i < uint8Array.length; i++) {
-                    binary += String.fromCharCode(uint8Array[i]);
+                const len = wavData.byteLength;
+                for (let i = 0; i < len; i++) {
+                    binary += String.fromCharCode(wavData[i]);
                 }
                 const base64 = btoa(binary);
                 const dataUri = `data:audio/wav;base64,${base64}`;
@@ -171,7 +166,6 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
                 );
                 soundRef.current = sound;
 
-                // Wait for playback to finish
                 await new Promise<void>((resolve) => {
                     sound.setOnPlaybackStatusUpdate((status) => {
                         if (status.isLoaded && status.didJustFinish) {
@@ -189,15 +183,12 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
 
         isProcessingRef.current = false;
         setIsPlaying(false);
-    }, [setupAudioMode]);
+    }, []);
 
-    const playAudio = useCallback(
-        async (audioData: ArrayBuffer, _mimeType?: string) => {
-            audioQueueRef.current.push(audioData);
-            processQueue();
-        },
-        [processQueue]
-    );
+    const playAudio = useCallback(async (audioData: ArrayBuffer, _mimeType?: string) => {
+        audioQueueRef.current.push(audioData);
+        processQueue();
+    }, [processQueue]);
 
     const stopPlayback = useCallback(async () => {
         audioQueueRef.current = [];
@@ -215,4 +206,32 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
         playAudio,
         stopPlayback,
     };
+}
+
+// WAV Header Construction Helper
+function createWavHeader(dataLength: number, sampleRate: number, numChannels: number, bitsPerSample: number): Uint8Array {
+    const header = new Uint8Array(44);
+    const view = new DataView(header.buffer);
+
+    function writeString(offset: number, string: string) {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    }
+
+    writeString(0, 'RIFF'); // ChunkID
+    view.setUint32(4, 36 + dataLength, true); // ChunkSize
+    writeString(8, 'WAVE'); // Format
+    writeString(12, 'fmt '); // Subchunk1ID
+    view.setUint32(16, 16, true); // Subchunk1Size
+    view.setUint16(20, 1, true); // AudioFormat (1 = PCM)
+    view.setUint16(22, numChannels, true); // NumChannels
+    view.setUint32(24, sampleRate, true); // SampleRate
+    view.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true); // ByteRate
+    view.setUint16(32, numChannels * (bitsPerSample / 8), true); // BlockAlign
+    view.setUint16(34, bitsPerSample, true); // BitsPerSample
+    writeString(36, 'data'); // Subchunk2ID
+    view.setUint32(40, dataLength, true); // Subchunk2Size
+
+    return header;
 }
