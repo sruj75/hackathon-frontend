@@ -5,17 +5,28 @@ import {
   useAnimatedValue,
   View,
   ViewStyle,
+  ScrollView,
+  TouchableOpacity,
+  Text,
 } from 'react-native';
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import ControlBar from './ui/ControlBar';
-import ChatBar from './ui/ChatBar';
-import ChatLog from './ui/ChatLog';
-import AgentVisualization from './ui/AgentVisualization';
-import { useWebSocketAgent, ADKEvent } from '@/hooks/useWebSocketAgent';
+import ControlBar from '../../components/assistant/ControlBar';
+import ChatBar from '../../components/assistant/ChatBar';
+import ChatLog from '../../components/assistant/ChatLog';
+import AgentVisualization from '../../components/assistant/AgentVisualization';
+import { useWebSocketAgent, ADKEvent, GenerativeUIEvent } from '@/hooks/useWebSocketAgent';
 import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
+
+// Generative UI Components
+import { DayView } from '../../components/generative/DayView';
+import { GoalProgress } from '../../components/generative/GoalProgress';
+import { TimeSlots } from '../../components/generative/TimeSlots';
+import { Confirmation } from '../../components/generative/Confirmation';
+import { DaySummary } from '../../components/generative/DaySummary';
+import { CurrentFocus } from '../../components/generative/CurrentFocus';
 
 // Generate unique IDs for this session
 const userId = `user-${Date.now()}`;
@@ -39,6 +50,7 @@ export default function AssistantScreen() {
     sendText,
     onEvent,
     onAudio,
+    onUIComponent,
   } = useWebSocketAgent(userId, sessionId);
 
   // Audio recording and playback
@@ -50,6 +62,10 @@ export default function AssistantScreen() {
   const [isChatEnabled, setChatEnabled] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
+
+  // Generative UI State (MVP - instant toggle, no animations)
+  const [uiComponents, setUIComponents] = useState<GenerativeUIEvent[]>([]);
+  const isMinimized = uiComponents.length > 0; // Auto-minimize when components exist
 
   // Connect on mount
   useEffect(() => {
@@ -76,25 +92,36 @@ export default function AssistantScreen() {
 
   // Set up audio data callback - stream audio chunks to WebSocket in real-time
   useEffect(() => {
-    onAudioData((data) => {
-      if (wsState.isConnected) {
+    const unsubscribe = onAudioData((data) => {
+      // Software AEC: Don't send audio while agent is speaking to prevent loopback
+      if (wsState.isConnected && !isPlaying) {
         // Log periodically to avoid spam
         console.log(`Streaming audio chunk: ${data.byteLength} bytes`);
         sendAudio(data);
       }
     });
-  }, [onAudioData, sendAudio, wsState.isConnected]);
+    return unsubscribe; // Cleanup to prevent duplicate listeners
+  }, [onAudioData, sendAudio, wsState.isConnected, isPlaying]);
 
   // Set up audio playback callback - play audio received from server
   useEffect(() => {
-    onAudio((audioData) => {
+    const unsubscribe = onAudio((audioData) => {
       playAudio(audioData);
     });
+    return unsubscribe; // Cleanup to prevent duplicate listeners
   }, [onAudio, playAudio]);
+
+  // Handle UI components from backend
+  useEffect(() => {
+    const unsubscribe = onUIComponent((component: GenerativeUIEvent) => {
+      setUIComponents((prev) => [...prev.slice(-5), component]); // Keep last 5
+    });
+    return unsubscribe; // Cleanup to prevent duplicate listeners
+  }, [onUIComponent]);
 
   // Handle ADK events (transcriptions, responses)
   useEffect(() => {
-    onEvent((event: ADKEvent) => {
+    const unsubscribe = onEvent((event: ADKEvent) => {
       // Handle input transcription (user speech)
       if (event.serverContent?.inputTranscription?.text) {
         addTranscription(userId, event.serverContent.inputTranscription.text);
@@ -114,6 +141,7 @@ export default function AssistantScreen() {
         }
       }
     });
+    return unsubscribe; // Cleanup to prevent duplicate listeners
   }, [onEvent]);
 
   const addTranscription = useCallback((participant: string, text: string) => {
@@ -153,6 +181,62 @@ export default function AssistantScreen() {
     [sendText, addTranscription]
   );
 
+  // Render Generative UI component based on type
+  const renderUIComponent = (component: GenerativeUIEvent) => {
+    const props = component.props as Record<string, unknown>;
+    switch (component.type) {
+      case 'day_view':
+        return (
+          <DayView
+            key={component.id}
+            events={(props.events as []) || []}
+            tasks={(props.tasks as []) || []}
+          />
+        );
+      case 'goal_progress':
+        return (
+          <GoalProgress
+            key={component.id}
+            percentage={(props.percentage as number) || 0}
+            summary={(props.summary as string) || ''}
+            completed={(props.completed as []) || []}
+            pending={(props.pending as []) || []}
+          />
+        );
+      case 'time_slots':
+        return (
+          <TimeSlots key={component.id} slots={(props.slots as []) || []} />
+        );
+      case 'confirmation':
+        return (
+          <Confirmation
+            key={component.id}
+            action={(props.action as string) || ''}
+            details={(props.details as string) || ''}
+          />
+        );
+      case 'day_summary':
+        return (
+          <DaySummary
+            key={component.id}
+            completed={(props.completed as []) || []}
+            pending={(props.pending as []) || []}
+            events_count={(props.events_count as number) || 0}
+          />
+        );
+      case 'current_focus':
+        return (
+          <CurrentFocus
+            key={component.id}
+            event={props.event as undefined}
+            next_event={props.next_event as undefined}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
   // Layout positioning
   const [containerWidth, setContainerWidth] = useState(Dimensions.get('window').width);
   const [containerHeight, setContainerHeight] = useState(Dimensions.get('window').height);
@@ -162,6 +246,44 @@ export default function AssistantScreen() {
     false // No local video in WebSocket mode
   );
 
+  // MVP: Instant toggle - no animations
+  if (isMinimized) {
+    // Minimized mode: Generative UI takes main space, agent in bottom bar
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.container}>
+          {/* Generative UI Components - takes main space */}
+          <ScrollView style={styles.generativeUIContainer}>
+            {uiComponents.map(renderUIComponent)}
+          </ScrollView>
+
+          {/* Bottom Bar - Compact Agent */}
+          <View style={styles.bottomBar}>
+            <View style={styles.bottomBarContent}>
+              <View style={styles.compactVisualization}>
+                <AgentVisualization
+                  style={styles.compactAgent}
+                  isConnected={wsState.isConnected}
+                  isPlaying={isPlaying}
+                />
+              </View>
+
+              <View style={styles.bottomBarControls}>
+                <Text style={styles.bottomBarText}>
+                  {isRecording ? '🎤 Listening...' : '🎤'}
+                </Text>
+                <TouchableOpacity onPress={onExitClick} style={styles.exitButton}>
+                  <Text style={styles.exitButtonText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Expanded mode: Full screen agent (current default behavior)
   return (
     <SafeAreaView style={styles.safeArea}>
       <View
@@ -253,6 +375,49 @@ const styles = StyleSheet.create({
   agentVisualization: {
     width: '100%',
     height: '100%',
+  },
+  // Minimized mode styles (MVP - scrappy)
+  generativeUIContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  bottomBar: {
+    backgroundColor: '#1a1a1a',
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  bottomBarContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  compactVisualization: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    overflow: 'hidden',
+  },
+  compactAgent: {
+    width: '100%',
+    height: '100%',
+  },
+  bottomBarControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  bottomBarText: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  exitButton: {
+    padding: 8,
+  },
+  exitButtonText: {
+    color: '#888',
+    fontSize: 20,
   },
 });
 

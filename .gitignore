@@ -6,6 +6,7 @@ node_modules/
 # Local Build
 android/
 ios/
+Intentive.app/
 
 # Expo
 .expo/
@@ -41,3 +42,8 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+# Temporary Artifacts
+temp_build/
+*.tar.gz
+eas.json

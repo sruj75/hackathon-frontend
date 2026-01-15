@@ -28,6 +28,16 @@ export function useAudioRecording(): UseAudioRecordingReturn {
             if (audioDataCallbackRef.current) {
                 // data is base64 encoded PCM 16-bit
                 const binaryString = atob(data);
+
+                // Simple audio level monitoring (log occasionally to reduce spam)
+                if (Math.random() < 0.05) { // Log 5% of chunks
+                    let audioLevel = 0;
+                    for (let i = 0; i < Math.min(50, binaryString.length); i++) {
+                        audioLevel = Math.max(audioLevel, Math.abs(binaryString.charCodeAt(i) - 128));
+                    }
+                    console.log(`🎤 ${binaryString.length}B | Level: ${audioLevel}`);
+                }
+
                 const bytes = new Uint8Array(binaryString.length);
                 for (let i = 0; i < binaryString.length; i++) {
                     bytes[i] = binaryString.charCodeAt(i);
@@ -51,6 +61,7 @@ export function useAudioRecording(): UseAudioRecordingReturn {
             }
 
             LiveAudioStream.start();
+
             setIsRecording(true);
             console.log('Real-time audio streaming started (react-native-live-audio-stream)');
         } catch (error) {
