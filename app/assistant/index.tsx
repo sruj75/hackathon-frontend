@@ -1,12 +1,9 @@
 import {
   Animated,
-  Dimensions,
   StyleSheet,
   useAnimatedValue,
   View,
-  ViewStyle,
   ScrollView,
-  TouchableOpacity,
   Text,
 } from 'react-native';
 
@@ -17,16 +14,17 @@ import ControlBar from '../../components/assistant/ControlBar';
 import ChatBar from '../../components/assistant/ChatBar';
 import ChatLog from '../../components/assistant/ChatLog';
 import AgentVisualization from '../../components/assistant/AgentVisualization';
-import { useWebSocketAgent, ADKEvent, GenerativeUIEvent } from '@/hooks/useWebSocketAgent';
+import {
+  useWebSocketAgent,
+  ADKEvent,
+  GenerativeUIEvent,
+} from '@/hooks/useWebSocketAgent';
 import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
 
 // Generative UI Components
 import { DayView } from '../../components/generative/DayView';
-import { GoalProgress } from '../../components/generative/GoalProgress';
-import { TimeSlots } from '../../components/generative/TimeSlots';
-import { Confirmation } from '../../components/generative/Confirmation';
-import { DaySummary } from '../../components/generative/DaySummary';
-import { CurrentFocus } from '../../components/generative/CurrentFocus';
+import { TodoList } from '../../components/generative/TodoList';
+import { CalendarView } from '../../components/generative/CalendarView';
 
 // Generate unique IDs for this session
 const userId = `user-${Date.now()}`;
@@ -37,6 +35,8 @@ interface Transcription {
   text: string;
   timestamp: number;
 }
+
+type ViewMode = 'voice' | 'chat' | 'ui';
 
 export default function AssistantScreen() {
   const router = useRouter();
@@ -59,13 +59,12 @@ export default function AssistantScreen() {
 
   // UI State
   const [isMicEnabled, setIsMicEnabled] = useState(false);
-  const [isChatEnabled, setChatEnabled] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('voice');
   const [chatMessage, setChatMessage] = useState('');
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
 
-  // Generative UI State (MVP - instant toggle, no animations)
+  // Generative UI State
   const [uiComponents, setUIComponents] = useState<GenerativeUIEvent[]>([]);
-  const isMinimized = uiComponents.length > 0; // Auto-minimize when components exist
 
   // Connect on mount
   useEffect(() => {
@@ -96,7 +95,7 @@ export default function AssistantScreen() {
       // Software AEC: Don't send audio while agent is speaking to prevent loopback
       if (wsState.isConnected && !isPlaying) {
         // Log periodically to avoid spam
-        console.log(`Streaming audio chunk: ${data.byteLength} bytes`);
+        // console.log(`Streaming audio chunk: ${data.byteLength} bytes`);
         sendAudio(data);
       }
     });
@@ -115,9 +114,17 @@ export default function AssistantScreen() {
   useEffect(() => {
     const unsubscribe = onUIComponent((component: GenerativeUIEvent) => {
       setUIComponents((prev) => [...prev.slice(-5), component]); // Keep last 5
+      setViewMode('ui'); // Auto-switch to UI mode
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
   }, [onUIComponent]);
+
+  const addTranscription = useCallback((participant: string, text: string) => {
+    setTranscriptions((prev) => [
+      ...prev,
+      { participant, text, timestamp: Date.now() },
+    ]);
+  }, []);
 
   // Handle ADK events (transcriptions, responses)
   useEffect(() => {
@@ -129,27 +136,25 @@ export default function AssistantScreen() {
 
       // Handle output transcription (agent speech)
       if (event.serverContent?.outputTranscription?.text) {
+        console.log(
+          '[CHAT] Received output transcription:',
+          event.serverContent.outputTranscription.text
+        );
         addTranscription('Agent', event.serverContent.outputTranscription.text);
       }
 
-      // Handle text responses
+      // Handle text responses (Chat Mode)
       if (event.content?.parts) {
         for (const part of event.content.parts) {
           if (part.text) {
+            console.log('[CHAT] Received text part:', part.text);
             addTranscription('Agent', part.text);
           }
         }
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onEvent]);
-
-  const addTranscription = useCallback((participant: string, text: string) => {
-    setTranscriptions((prev) => [
-      ...prev,
-      { participant, text, timestamp: Date.now() },
-    ]);
-  }, []);
+  }, [onEvent, addTranscription]);
 
   // Control callbacks
   const onMicClick = useCallback(async () => {
@@ -163,8 +168,17 @@ export default function AssistantScreen() {
   }, [isRecording, startRecording, stopRecording]);
 
   const onChatClick = useCallback(() => {
-    setChatEnabled(!isChatEnabled);
-  }, [isChatEnabled]);
+    if (viewMode === 'chat') {
+      // Toggle back to UI if exists, else Voice
+      if (uiComponents.length > 0) {
+        setViewMode('ui');
+      } else {
+        setViewMode('voice');
+      }
+    } else {
+      setViewMode('chat');
+    }
+  }, [viewMode, uiComponents.length]);
 
   const onExitClick = useCallback(() => {
     disconnect();
@@ -184,7 +198,12 @@ export default function AssistantScreen() {
   // Render Generative UI component based on type
   const renderUIComponent = (component: GenerativeUIEvent) => {
     const props = component.props as Record<string, unknown>;
-    console.log('[FRONTEND-RENDER] >>> Rendering component:', component.type, 'id:', component.id);
+    console.log(
+      '[FRONTEND-RENDER] >>> Rendering component:',
+      component.type,
+      'id:',
+      component.id
+    );
     switch (component.type) {
       case 'day_view':
         return (
@@ -195,143 +214,52 @@ export default function AssistantScreen() {
           />
         );
       case 'todo_list':
-        // Show tasks only using DayView component
         return (
-          <DayView
+          <TodoList
             key={component.id}
-            events={[]}
             tasks={(props.tasks as []) || []}
           />
         );
       case 'calendar_view':
-        // Show events only using DayView component
         return (
-          <DayView
+          <CalendarView
             key={component.id}
             events={(props.events as []) || []}
-            tasks={[]}
-          />
-        );
-      case 'goal_progress':
-        return (
-          <GoalProgress
-            key={component.id}
-            percentage={(props.percentage as number) || 0}
-            summary={(props.summary as string) || ''}
-            completed={(props.completed as []) || []}
-            pending={(props.pending as []) || []}
-          />
-        );
-      case 'time_slots':
-        return (
-          <TimeSlots key={component.id} slots={(props.slots as []) || []} />
-        );
-      case 'confirmation':
-        return (
-          <Confirmation
-            key={component.id}
-            action={(props.action as string) || ''}
-            details={(props.details as string) || ''}
-          />
-        );
-      case 'day_summary':
-        return (
-          <DaySummary
-            key={component.id}
-            completed={(props.completed as []) || []}
-            pending={(props.pending as []) || []}
-            events_count={(props.events_count as number) || 0}
-          />
-        );
-      case 'current_focus':
-        return (
-          <CurrentFocus
-            key={component.id}
-            event={props.event as undefined}
-            next_event={props.next_event as undefined}
           />
         );
       default:
         // Show error for unknown component types (helps debugging)
         console.warn(`Unknown UI component type: ${component.type}`);
         return (
-          <View key={component.id} style={{ padding: 16, backgroundColor: '#fee2e2', borderRadius: 8, margin: 8 }}>
-            <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>Unknown Component</Text>
+          <View
+            key={component.id}
+            style={{
+              padding: 16,
+              backgroundColor: '#fee2e2',
+              borderRadius: 8,
+              margin: 8,
+            }}
+          >
+            <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>
+              Unknown Component
+            </Text>
             <Text style={{ color: '#dc2626' }}>Type: {component.type}</Text>
           </View>
         );
     }
   };
 
-  // Layout positioning
-  const [containerWidth, setContainerWidth] = useState(Dimensions.get('window').width);
-  const [containerHeight, setContainerHeight] = useState(Dimensions.get('window').height);
+  const isCollapsed = viewMode !== 'voice';
 
   const agentVisualizationPosition = useAgentVisualizationPosition(
-    isChatEnabled,
+    isCollapsed,
     false // No local video in WebSocket mode
   );
 
-  // MVP: Instant toggle - no animations
-  if (isMinimized) {
-    // Minimized mode: Generative UI takes main space, agent in bottom bar
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.container}>
-          {/* Generative UI Components - takes main space */}
-          <ScrollView style={styles.generativeUIContainer}>
-            {uiComponents.map(renderUIComponent)}
-          </ScrollView>
-
-          {/* Bottom Bar - Compact Agent */}
-          <View style={styles.bottomBar}>
-            <View style={styles.bottomBarContent}>
-              <View style={styles.compactVisualization}>
-                <AgentVisualization
-                  style={styles.compactAgent}
-                  isConnected={wsState.isConnected}
-                  isPlaying={isPlaying}
-                />
-              </View>
-
-              <View style={styles.bottomBarControls}>
-                <Text style={styles.bottomBarText}>
-                  {isRecording ? '🎤 Listening...' : '🎤'}
-                </Text>
-                <TouchableOpacity onPress={onExitClick} style={styles.exitButton}>
-                  <Text style={styles.exitButtonText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // Expanded mode: Full screen agent (current default behavior)
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View
-        style={styles.container}
-        onLayout={(event) => {
-          const { width, height } = event.nativeEvent.layout;
-          setContainerWidth(width);
-          setContainerHeight(height);
-        }}
-      >
-        <View style={styles.spacer} />
-        <ChatLog
-          style={styles.logContainer}
-          transcriptions={transcriptions}
-        />
-        <ChatBar
-          style={styles.chatBar}
-          value={chatMessage}
-          onChangeText={(value) => setChatMessage(value)}
-          onChatSend={onChatSend}
-        />
-
+      <View style={styles.container}>
+        {/* 1. Top: Agent Pulse (Always present, collapsed in chat/ui modes) */}
         <Animated.View
           style={[
             {
@@ -349,12 +277,42 @@ export default function AssistantScreen() {
           />
         </Animated.View>
 
+        {/* 2. Middle: Content Switcher */}
+        <View style={styles.middleContainer}>
+          {viewMode === 'chat' && (
+            <>
+              <ChatLog
+                style={styles.logContainer}
+                transcriptions={transcriptions}
+              />
+              <ChatBar
+                style={styles.chatBar}
+                value={chatMessage}
+                onChangeText={(value) => setChatMessage(value)}
+                onChatSend={onChatSend}
+              />
+            </>
+          )}
+
+          {viewMode === 'ui' && (
+            <ScrollView style={styles.generativeUIContainer}>
+              {/* Render the latest component or all? Typically focused view is one. */}
+              {/* Mapping all for now to preserve history if desired, but user said "render appears in the middle" */}
+              {uiComponents.map(renderUIComponent)}
+            </ScrollView>
+          )}
+          
+          {/* Spacer for Voice Mode to push agent to center (handled by absolute positioning of agent) */}
+          {viewMode === 'voice' && <View style={styles.spacer} />}
+        </View>
+
+        {/* 3. Bottom: Control Bar (Always present) */}
         <ControlBar
           style={styles.controlBar}
           options={{
             isMicEnabled,
             isCameraEnabled: false,
-            isChatEnabled,
+            isChatEnabled: viewMode === 'chat',
             onMicClick,
             onCameraClick: () => { }, // No camera in WebSocket mode
             onChatClick,
@@ -377,7 +335,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   spacer: {
-    height: '24%',
+    height: '24%', // Adjust if needed for voice mode centering
+  },
+  middleContainer: {
+    flex: 1,
+    width: '100%',
+    marginTop: '25%', // Space for collapsed pulse at top
+    marginBottom: 80, // Space for ControlBar at bottom
   },
   logContainer: {
     width: '100%',
@@ -389,9 +353,11 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     marginHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 0,
   },
   controlBar: {
+    position: 'absolute',
+    bottom: 0,
     left: 0,
     right: 0,
     zIndex: 2,
@@ -402,48 +368,10 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  // Minimized mode styles (MVP - scrappy)
   generativeUIContainer: {
     flex: 1,
-    backgroundColor: '#000000',
-  },
-  bottomBar: {
-    backgroundColor: '#1a1a1a',
-    borderTopWidth: 1,
-    borderTopColor: '#333',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  bottomBarContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  compactVisualization: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    overflow: 'hidden',
-  },
-  compactAgent: {
     width: '100%',
-    height: '100%',
-  },
-  bottomBarControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  bottomBarText: {
-    color: '#fff',
-    fontSize: 14,
-  },
-  exitButton: {
-    padding: 8,
-  },
-  exitButtonText: {
-    color: '#888',
-    fontSize: 20,
+    backgroundColor: '#000000',
   },
 });
 
@@ -462,20 +390,24 @@ const createAnimConfig = (toValue: any) => ({
 });
 
 const useAgentVisualizationPosition = (
-  isChatVisible: boolean,
+  isCollapsed: boolean,
   _hasLocalVideo: boolean
 ) => {
-  const width = useAnimatedValue(isChatVisible ? collapsedWidth : expandedAgentWidth);
-  const height = useAnimatedValue(isChatVisible ? collapsedHeight : expandedAgentHeight);
+  const width = useAnimatedValue(
+    isCollapsed ? collapsedWidth : expandedAgentWidth
+  );
+  const height = useAnimatedValue(
+    isCollapsed ? collapsedHeight : expandedAgentHeight
+  );
 
   useEffect(() => {
     const widthAnim = Animated.spring(
       width,
-      createAnimConfig(isChatVisible ? collapsedWidth : expandedAgentWidth)
+      createAnimConfig(isCollapsed ? collapsedWidth : expandedAgentWidth)
     );
     const heightAnim = Animated.spring(
       height,
-      createAnimConfig(isChatVisible ? collapsedHeight : expandedAgentHeight)
+      createAnimConfig(isCollapsed ? collapsedHeight : expandedAgentHeight)
     );
 
     widthAnim.start();
@@ -485,7 +417,7 @@ const useAgentVisualizationPosition = (
       widthAnim.stop();
       heightAnim.stop();
     };
-  }, [width, height, isChatVisible]);
+  }, [width, height, isCollapsed]);
 
   const x = useAnimatedValue(0);
   const y = useAnimatedValue(0);
@@ -494,7 +426,7 @@ const useAgentVisualizationPosition = (
     let targetX = 0;
     let targetY = 0;
 
-    if (isChatVisible) {
+    if (isCollapsed) {
       targetX = 0.5 - collapsedWidth / 2;
       targetY = 16;
     }
@@ -509,7 +441,7 @@ const useAgentVisualizationPosition = (
       xAnim.stop();
       yAnim.stop();
     };
-  }, [x, y, isChatVisible]);
+  }, [x, y, isCollapsed]);
 
   return {
     left: x.interpolate({

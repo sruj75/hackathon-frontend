@@ -1,59 +1,38 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
-import { DayViewProps } from '@/types/generativeUI.types';
-import { TaskCard } from './TaskCard';
+import { CalendarEvent } from '@/types/generativeUI.types';
+
+interface CalendarViewProps {
+  events: CalendarEvent[];
+}
 
 /**
- * DayView - Unified timeline showing today's schedule + pending tasks
+ * CalendarView - Dedicated view for calendar events
  */
-export function DayView({ events, tasks }: DayViewProps) {
-  const pendingTasks = tasks.filter((t) => t.status === 'pending');
-  const completedTasks = tasks.filter((t) => t.status === 'completed');
-
+export function CalendarView({ events }: CalendarViewProps) {
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>Today's Plan</Text>
+      <Text style={styles.header}>Calendar</Text>
 
-      {/* Timeline */}
       <ScrollView style={styles.timeline}>
-        {events.length > 0 && (
+        {events.length > 0 ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>📅 Scheduled</Text>
             {events.map((event) => (
               <View key={event.id} style={styles.eventCard}>
                 <Text style={styles.eventTime}>
                   {formatTime(event.start_time)} - {formatTime(event.end_time)}
                 </Text>
                 <Text style={styles.eventTitle}>{event.title}</Text>
+                {event.description && (
+                  <Text style={styles.eventDescription} numberOfLines={2}>
+                    {event.description}
+                  </Text>
+                )}
               </View>
             ))}
           </View>
-        )}
-
-        {pendingTasks.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>
-              📋 To Do ({pendingTasks.length})
-            </Text>
-            {pendingTasks.map((task) => (
-              <TaskCard key={task.id} task={task} />
-            ))}
-          </View>
-        )}
-
-        {completedTasks.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>
-              ✅ Done ({completedTasks.length})
-            </Text>
-            {completedTasks.map((task) => (
-              <TaskCard key={task.id} task={task} />
-            ))}
-          </View>
-        )}
-
-        {events.length === 0 && tasks.length === 0 && (
-          <Text style={styles.emptyText}>No events or tasks for today</Text>
+        ) : (
+          <Text style={styles.emptyText}>No events scheduled</Text>
         )}
       </ScrollView>
     </View>
@@ -79,6 +58,7 @@ const styles = StyleSheet.create({
     padding: 16,
     marginVertical: 8,
     marginHorizontal: 16,
+    flex: 1,
   },
   header: {
     fontSize: 18,
@@ -87,16 +67,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   timeline: {
-    maxHeight: 300,
+    flex: 1,
   },
   section: {
     marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#888',
-    marginBottom: 8,
   },
   eventCard: {
     backgroundColor: '#252525',
@@ -114,6 +88,12 @@ const styles = StyleSheet.create({
   eventTitle: {
     fontSize: 15,
     color: '#fff',
+    fontWeight: '500',
+  },
+  eventDescription: {
+    fontSize: 13,
+    color: '#aaa',
+    marginTop: 4,
   },
   emptyText: {
     color: '#666',

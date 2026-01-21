@@ -1,12 +1,12 @@
-import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
-import { TaskCardProps } from "@/types/generativeUI.types";
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { TaskCardProps } from '@/types/generativeUI.types';
 
 /**
  * TaskCard - Single task with schedule/complete actions
  */
 export function TaskCard({ task }: TaskCardProps) {
-  const isCompleted = task.status === "completed";
+  const isCompleted = task.status === 'completed';
 
   return (
     <View style={[styles.container, isCompleted && styles.completed]}>
@@ -23,7 +23,7 @@ export function TaskCard({ task }: TaskCardProps) {
           </Text>
         )}
         {task.due && (
-          <Text style={styles.due}>Due: {task.due.split("T")[0]}</Text>
+          <Text style={styles.due}>Due: {task.due.split('T')[0]}</Text>
         )}
       </View>
 
@@ -45,12 +45,12 @@ export function TaskCard({ task }: TaskCardProps) {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: "#252525",
+    backgroundColor: '#252525',
     borderRadius: 8,
     padding: 12,
     marginBottom: 8,
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   completed: {
     opacity: 0.6,
@@ -59,46 +59,46 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   goalBadge: {
     marginRight: 6,
   },
   title: {
     fontSize: 15,
-    color: "#fff",
+    color: '#fff',
     flex: 1,
   },
   completedText: {
-    textDecorationLine: "line-through",
-    color: "#888",
+    textDecorationLine: 'line-through',
+    color: '#888',
   },
   notes: {
     fontSize: 13,
-    color: "#888",
+    color: '#888',
     marginTop: 4,
   },
   due: {
     fontSize: 12,
-    color: "#4A90D9",
+    color: '#4A90D9',
     marginTop: 4,
   },
   actions: {
-    flexDirection: "row",
+    flexDirection: 'row',
     gap: 8,
   },
   actionButton: {
-    backgroundColor: "#333",
+    backgroundColor: '#333',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
   },
   completeButton: {
-    backgroundColor: "#2a5a2a",
+    backgroundColor: '#2a5a2a',
   },
   actionText: {
-    color: "#fff",
+    color: '#fff',
     fontSize: 13,
   },
 });
