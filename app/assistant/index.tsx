@@ -184,6 +184,7 @@ export default function AssistantScreen() {
   // Render Generative UI component based on type
   const renderUIComponent = (component: GenerativeUIEvent) => {
     const props = component.props as Record<string, unknown>;
+    console.log('[FRONTEND-RENDER] >>> Rendering component:', component.type, 'id:', component.id);
     switch (component.type) {
       case 'day_view':
         return (
@@ -191,6 +192,24 @@ export default function AssistantScreen() {
             key={component.id}
             events={(props.events as []) || []}
             tasks={(props.tasks as []) || []}
+          />
+        );
+      case 'todo_list':
+        // Show tasks only using DayView component
+        return (
+          <DayView
+            key={component.id}
+            events={[]}
+            tasks={(props.tasks as []) || []}
+          />
+        );
+      case 'calendar_view':
+        // Show events only using DayView component
+        return (
+          <DayView
+            key={component.id}
+            events={(props.events as []) || []}
+            tasks={[]}
           />
         );
       case 'goal_progress':
@@ -233,7 +252,14 @@ export default function AssistantScreen() {
           />
         );
       default:
-        return null;
+        // Show error for unknown component types (helps debugging)
+        console.warn(`Unknown UI component type: ${component.type}`);
+        return (
+          <View key={component.id} style={{ padding: 16, backgroundColor: '#fee2e2', borderRadius: 8, margin: 8 }}>
+            <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>Unknown Component</Text>
+            <Text style={{ color: '#dc2626' }}>Type: {component.type}</Text>
+          </View>
+        );
     }
   };
 
