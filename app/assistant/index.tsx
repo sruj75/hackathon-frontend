@@ -54,7 +54,8 @@ export default function AssistantScreen() {
   } = useWebSocketAgent(userId, sessionId);
 
   // Audio recording and playback
-  const { isRecording, startRecording, stopRecording, onAudioData } = useAudioRecording();
+  const { isRecording, startRecording, stopRecording, onAudioData } =
+    useAudioRecording();
   const { isPlaying, playAudio, stopPlayback } = useAudioPlayback();
 
   // UI State
@@ -113,7 +114,7 @@ export default function AssistantScreen() {
   // Handle UI components from backend
   useEffect(() => {
     const unsubscribe = onUIComponent((component: GenerativeUIEvent) => {
-      setUIComponents((prev) => [...prev.slice(-5), component]); // Keep last 5
+      setUIComponents([component]); // Replace with new component (clearing history)
       setViewMode('ui'); // Auto-switch to UI mode
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
@@ -215,10 +216,7 @@ export default function AssistantScreen() {
         );
       case 'todo_list':
         return (
-          <TodoList
-            key={component.id}
-            tasks={(props.tasks as []) || []}
-          />
+          <TodoList key={component.id} tasks={(props.tasks as []) || []} />
         );
       case 'calendar_view':
         return (
@@ -301,7 +299,6 @@ export default function AssistantScreen() {
               {uiComponents.map(renderUIComponent)}
             </ScrollView>
           )}
-          
           {/* Spacer for Voice Mode to push agent to center (handled by absolute positioning of agent) */}
           {viewMode === 'voice' && <View style={styles.spacer} />}
         </View>
@@ -314,7 +311,7 @@ export default function AssistantScreen() {
             isCameraEnabled: false,
             isChatEnabled: viewMode === 'chat',
             onMicClick,
-            onCameraClick: () => { }, // No camera in WebSocket mode
+            onCameraClick: () => {}, // No camera in WebSocket mode
             onChatClick,
             onExitClick,
           }}
