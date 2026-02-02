@@ -344,7 +344,7 @@ const styles = StyleSheet.create({
   middleContainer: {
     flex: 1,
     width: '100%',
-    marginTop: '25%', // Space for collapsed pulse at top
+    marginTop: '32%', // Space for collapsed pulse at top with breathing room
     marginBottom: 80, // Space for ControlBar at bottom
   },
   logContainer: {
