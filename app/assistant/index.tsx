@@ -66,6 +66,7 @@ export default function AssistantScreen() {
 
   // Generative UI State
   const [uiComponents, setUIComponents] = useState<GenerativeUIEvent[]>([]);
+  const [isPendingUIRender, setIsPendingUIRender] = useState(false);
 
   // Connect on mount
   useEffect(() => {
@@ -113,11 +114,10 @@ export default function AssistantScreen() {
 
   // Handle UI components from backend
   useEffect(() => {
-    const unsubscribe = onUIComponent((component: GenerativeUIEvent) => {
+    onUIComponent((component: GenerativeUIEvent) => {
       setUIComponents([component]); // Replace with new component (clearing history)
-      setViewMode('ui'); // Auto-switch to UI mode
+      setIsPendingUIRender(true); // Trigger collapse animation (callback will handle UI render)
     });
-    return unsubscribe; // Cleanup to prevent duplicate listeners
   }, [onUIComponent]);
 
   const addTranscription = useCallback((participant: string, text: string) => {
@@ -247,11 +247,18 @@ export default function AssistantScreen() {
     }
   };
 
-  const isCollapsed = viewMode !== 'voice';
+  const isCollapsed = viewMode !== 'voice' || isPendingUIRender;
+
+  // Callback triggered when collapse animation completes
+  const handleCollapseComplete = useCallback(() => {
+    setViewMode('ui'); // Auto-switch to UI mode after animation
+    setIsPendingUIRender(false);
+  }, []);
 
   const agentVisualizationPosition = useAgentVisualizationPosition(
     isCollapsed,
-    false // No local video in WebSocket mode
+    false, // No local video in WebSocket mode
+    handleCollapseComplete
   );
 
   return (
@@ -263,7 +270,7 @@ export default function AssistantScreen() {
             {
               position: 'absolute',
               zIndex: 1,
-              backgroundColor: '#000000',
+              backgroundColor: 'transparent',
               ...agentVisualizationPosition,
             },
           ]}
@@ -388,7 +395,8 @@ const createAnimConfig = (toValue: any) => ({
 
 const useAgentVisualizationPosition = (
   isCollapsed: boolean,
-  _hasLocalVideo: boolean
+  _hasLocalVideo: boolean,
+  onCollapseComplete?: () => void
 ) => {
   const width = useAnimatedValue(
     isCollapsed ? collapsedWidth : expandedAgentWidth
@@ -397,7 +405,28 @@ const useAgentVisualizationPosition = (
     isCollapsed ? collapsedHeight : expandedAgentHeight
   );
 
+  // Track animation completion across both useEffects
+  const completionCountRef = React.useRef(0);
+  const totalAnimations = 4;
+
   useEffect(() => {
+    // Reset counter when animation state changes
+    completionCountRef.current = 0;
+
+    const handleAnimationComplete = (finished: { finished: boolean }) => {
+      if (finished.finished) {
+        completionCountRef.current++;
+        // Only trigger callback when collapsing and all 4 animations complete
+        if (
+          completionCountRef.current === totalAnimations &&
+          isCollapsed &&
+          onCollapseComplete
+        ) {
+          onCollapseComplete();
+        }
+      }
+    };
+
     const widthAnim = Animated.spring(
       width,
       createAnimConfig(isCollapsed ? collapsedWidth : expandedAgentWidth)
@@ -407,19 +436,33 @@ const useAgentVisualizationPosition = (
       createAnimConfig(isCollapsed ? collapsedHeight : expandedAgentHeight)
     );
 
-    widthAnim.start();
-    heightAnim.start();
+    widthAnim.start(handleAnimationComplete);
+    heightAnim.start(handleAnimationComplete);
 
     return () => {
       widthAnim.stop();
       heightAnim.stop();
     };
-  }, [width, height, isCollapsed]);
+  }, [width, height, isCollapsed, onCollapseComplete]);
 
   const x = useAnimatedValue(0);
   const y = useAnimatedValue(0);
 
   useEffect(() => {
+    const handleAnimationComplete = (finished: { finished: boolean }) => {
+      if (finished.finished) {
+        completionCountRef.current++;
+        // Only trigger callback when collapsing and all 4 animations complete
+        if (
+          completionCountRef.current === totalAnimations &&
+          isCollapsed &&
+          onCollapseComplete
+        ) {
+          onCollapseComplete();
+        }
+      }
+    };
+
     let targetX = 0;
     let targetY = 0;
 
@@ -431,14 +474,14 @@ const useAgentVisualizationPosition = (
     const xAnim = Animated.spring(x, createAnimConfig(targetX));
     const yAnim = Animated.spring(y, createAnimConfig(targetY));
 
-    xAnim.start();
-    yAnim.start();
+    xAnim.start(handleAnimationComplete);
+    yAnim.start(handleAnimationComplete);
 
     return () => {
       xAnim.stop();
       yAnim.stop();
     };
-  }, [x, y, isCollapsed]);
+  }, [x, y, isCollapsed, onCollapseComplete]);
 
   return {
     left: x.interpolate({
