@@ -1,0 +1,18 @@
+diff --git a/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m b/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m
+index a6f2317..8a11f90 100644
+--- a/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m
++++ b/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m
+@@ -32,10 +32,11 @@ @implementation RNLiveAudioStream
+                                        mode: AVAudioSessionModeVoiceChat
+                                     options: AVAudioSessionCategoryOptionDuckOthers |
+                                              AVAudioSessionCategoryOptionAllowBluetooth |
+-                                             AVAudioSessionCategoryOptionAllowAirPlay
++                                             AVAudioSessionCategoryOptionAllowAirPlay |
++                                             AVAudioSessionCategoryOptionDefaultToSpeaker
+                                       error: &error];
+     } else {
+-        success = [audioSession setCategory: AVAudioSessionCategoryPlayAndRecord withOptions: AVAudioSessionCategoryOptionDuckOthers error: &error];
++        success = [audioSession setCategory: AVAudioSessionCategoryPlayAndRecord withOptions: AVAudioSessionCategoryOptionDuckOthers | AVAudioSessionCategoryOptionDefaultToSpeaker error: &error];
+         success = [audioSession setMode: AVAudioSessionModeVoiceChat error: &error] && success;
+     }
+     if (!success || error != nil) {

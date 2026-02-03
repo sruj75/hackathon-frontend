@@ -7,7 +7,7 @@ import {
   Text,
 } from 'react-native';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import ControlBar from '../../components/assistant/ControlBar';
@@ -249,13 +249,20 @@ export default function AssistantScreen() {
 
   const isCollapsed = viewMode !== 'voice' || isPendingUIRender;
 
+  // Use ref to track pending UI state without causing callback recreation
+  const isPendingUIRenderRef = useRef(isPendingUIRender);
+  useEffect(() => {
+    isPendingUIRenderRef.current = isPendingUIRender;
+  }, [isPendingUIRender]);
+
   // Callback triggered when collapse animation completes
+  // Stable reference prevents animation restart loop
   const handleCollapseComplete = useCallback(() => {
-    if (isPendingUIRender) {
+    if (isPendingUIRenderRef.current) {
       setViewMode('ui'); // Only auto-switch when UI event pending
       setIsPendingUIRender(false);
     }
-  }, [isPendingUIRender]);
+  }, []); // Empty deps - callback never changes
 
   const agentVisualizationPosition = useAgentVisualizationPosition(
     isCollapsed,
