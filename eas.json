@@ -9,7 +9,7 @@
             "distribution": "internal",
             "node": "20.19.4",
             "ios": {
-                "simulator": true
+                "simulator": false
             }
         },
         "preview": {

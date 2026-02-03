@@ -17,7 +17,7 @@
         "NSMicrophoneUsageDescription": "This app uses the microphone so you can talk to the voice assistant.",
         "NSCameraUsageDescription": "Camera access is used for optional video features.",
         "NSBluetoothAlwaysUsageDescription": "Bluetooth is used for connecting to audio devices.",
-        "ITSAppUsesNonExemptEncryption": true,
+        "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         }

@@ -251,9 +251,11 @@ export default function AssistantScreen() {
 
   // Callback triggered when collapse animation completes
   const handleCollapseComplete = useCallback(() => {
-    setViewMode('ui'); // Auto-switch to UI mode after animation
-    setIsPendingUIRender(false);
-  }, []);
+    if (isPendingUIRender) {
+      setViewMode('ui'); // Only auto-switch when UI event pending
+      setIsPendingUIRender(false);
+    }
+  }, [isPendingUIRender]);
 
   const agentVisualizationPosition = useAgentVisualizationPosition(
     isCollapsed,
