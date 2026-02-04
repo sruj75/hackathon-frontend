@@ -9,7 +9,7 @@ import {
 
 import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import ControlBar from '../../components/assistant/ControlBar';
 import ChatBar from '../../components/assistant/ChatBar';
 import ChatLog from '../../components/assistant/ChatLog';
@@ -26,9 +26,8 @@ import { DayView } from '../../components/generative/DayView';
 import { TodoList } from '../../components/generative/TodoList';
 import { CalendarView } from '../../components/generative/CalendarView';
 
-// Generate unique IDs for this session
-const userId = `user-${Date.now()}`;
-const sessionId = `session-${Date.now()}`;
+// Hardcoded userId for v0 (matches root layout)
+const USER_ID = 'user_default';
 
 interface Transcription {
   participant: string;
@@ -40,6 +39,23 @@ type ViewMode = 'voice' | 'chat' | 'ui';
 
 export default function AssistantScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+
+  // Get session ID from route params (deep link) or generate new one
+  const sessionId =
+    (params.resume_session_id as string) || `session-${Date.now()}`;
+
+  // Log deep link context if available
+  useEffect(() => {
+    if (params.resume_session_id) {
+      console.log(
+        '[AssistantScreen] Resuming session from notification:',
+        params.resume_session_id,
+        'type:',
+        params.trigger_type
+      );
+    }
+  }, [params.resume_session_id, params.trigger_type]);
 
   // WebSocket connection
   const {
@@ -51,7 +67,7 @@ export default function AssistantScreen() {
     onEvent,
     onAudio,
     onUIComponent,
-  } = useWebSocketAgent(userId, sessionId);
+  } = useWebSocketAgent(USER_ID, sessionId);
 
   // Audio recording and playback
   const { isRecording, startRecording, stopRecording, onAudioData } =
@@ -132,7 +148,7 @@ export default function AssistantScreen() {
     const unsubscribe = onEvent((event: ADKEvent) => {
       // Handle input transcription (user speech)
       if (event.serverContent?.inputTranscription?.text) {
-        addTranscription(userId, event.serverContent.inputTranscription.text);
+        addTranscription(USER_ID, event.serverContent.inputTranscription.text);
       }
 
       // Handle output transcription (agent speech)
@@ -189,7 +205,7 @@ export default function AssistantScreen() {
 
   const onChatSend = useCallback(
     (message: string) => {
-      addTranscription(userId, message);
+      addTranscription(USER_ID, message);
       sendText(message);
       setChatMessage('');
     },
