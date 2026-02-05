@@ -5,29 +5,29 @@ import {
   View,
   ScrollView,
   Text,
-} from "react-native";
+} from 'react-native';
 
-import React, { useCallback, useEffect, useState, useRef } from "react";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter, useLocalSearchParams } from "expo-router";
-import ControlBar from "../../components/assistant/ControlBar";
-import ChatBar from "../../components/assistant/ChatBar";
-import ChatLog from "../../components/assistant/ChatLog";
-import AgentVisualization from "../../components/assistant/AgentVisualization";
+import React, { useCallback, useEffect, useState, useRef } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import ControlBar from '../../components/assistant/ControlBar';
+import ChatBar from '../../components/assistant/ChatBar';
+import ChatLog from '../../components/assistant/ChatLog';
+import AgentVisualization from '../../components/assistant/AgentVisualization';
 import {
   useWebSocketAgent,
   ADKEvent,
   GenerativeUIEvent,
-} from "@/hooks/useWebSocketAgent";
-import { useAudioRecording, useAudioPlayback } from "@/hooks/useAudio";
+} from '@/hooks/useWebSocketAgent';
+import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
 
 // Generative UI Components
-import { DayView } from "../../components/generative/DayView";
-import { TodoList } from "../../components/generative/TodoList";
-import { CalendarView } from "../../components/generative/CalendarView";
+import { DayView } from '../../components/generative/DayView';
+import { TodoList } from '../../components/generative/TodoList';
+import { CalendarView } from '../../components/generative/CalendarView';
 
 // Hardcoded userId for v0 (matches root layout)
-const USER_ID = "user_default";
+const USER_ID = 'user_default';
 
 interface Transcription {
   participant: string;
@@ -35,7 +35,7 @@ interface Transcription {
   timestamp: number;
 }
 
-type ViewMode = "voice" | "chat" | "ui";
+type ViewMode = 'voice' | 'chat' | 'ui';
 
 export default function AssistantScreen() {
   const router = useRouter();
@@ -49,9 +49,9 @@ export default function AssistantScreen() {
   useEffect(() => {
     if (params.resume_session_id) {
       console.log(
-        "[AssistantScreen] Resuming session from notification:",
+        '[AssistantScreen] Resuming session from notification:',
         params.resume_session_id,
-        "type:",
+        'type:',
         params.trigger_type
       );
     }
@@ -76,9 +76,15 @@ export default function AssistantScreen() {
 
   // UI State
   const [isMicEnabled, setIsMicEnabled] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("voice");
-  const [chatMessage, setChatMessage] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>('voice');
+  const [chatMessage, setChatMessage] = useState('');
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
+
+  // Streaming state for accumulating partial responses
+  const [streamingTranscription, setStreamingTranscription] = useState<{
+    participant: string;
+    text: string;
+  } | null>(null);
 
   // Generative UI State
   const [uiComponents, setUIComponents] = useState<GenerativeUIEvent[]>([]);
@@ -104,14 +110,14 @@ export default function AssistantScreen() {
   const hasAutoStartedRef = React.useRef(false);
   useEffect(() => {
     if (wsState.isConnected && !isRecording && !hasAutoStartedRef.current) {
-      console.log("Auto-starting real-time recording...");
+      console.log('Auto-starting real-time recording...');
       startRecording()
         .then(() => {
           setIsMicEnabled(true);
           hasAutoStartedRef.current = true;
-          console.log("Real-time audio streaming active");
+          console.log('Real-time audio streaming active');
         })
-        .catch((err) => console.error("Failed to start recording:", err));
+        .catch((err) => console.error('Failed to start recording:', err));
     }
   }, [wsState.isConnected, isRecording, startRecording]);
 
@@ -159,23 +165,62 @@ export default function AssistantScreen() {
         addTranscription(USER_ID, event.serverContent.inputTranscription.text);
       }
 
-      // Handle output transcription (agent speech)
+      // Handle output transcription (agent speech) - already complete
       if (event.serverContent?.outputTranscription?.text) {
         console.log(
-          "[CHAT] Received output transcription:",
+          '[CHAT] Received output transcription:',
           event.serverContent.outputTranscription.text
         );
-        addTranscription("Agent", event.serverContent.outputTranscription.text);
+        addTranscription('Agent', event.serverContent.outputTranscription.text);
       }
 
-      // Handle text responses (Chat Mode)
+      // Handle text responses (Chat Mode) - with streaming support
       if (event.content?.parts) {
         for (const part of event.content.parts) {
           if (part.text) {
-            console.log("[CHAT] Received text part:", part.text);
-            addTranscription("Agent", part.text);
+            const textContent = part.text;
+            console.log(
+              '[CHAT] Received text part:',
+              textContent,
+              'partial:',
+              event.partial
+            );
+
+            if (event.partial) {
+              // Accumulate partial responses
+              setStreamingTranscription((prev) => {
+                if (prev) {
+                  // Append to existing streaming text
+                  return {
+                    participant: 'Agent',
+                    text: prev.text + textContent,
+                  };
+                } else {
+                  // Start new streaming text
+                  return {
+                    participant: 'Agent',
+                    text: textContent,
+                  };
+                }
+              });
+            } else {
+              // Non-partial response - add directly
+              addTranscription('Agent', textContent);
+            }
           }
         }
+      }
+
+      // Handle turn completion - finalize streaming transcription
+      if (event.turnComplete) {
+        console.log('[CHAT] Turn complete, finalizing streaming transcription');
+        setStreamingTranscription((prev) => {
+          if (prev && prev.text) {
+            // Move streaming text to final transcriptions
+            addTranscription(prev.participant, prev.text);
+          }
+          return null; // Clear streaming state
+        });
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
@@ -193,15 +238,15 @@ export default function AssistantScreen() {
   }, [isRecording, startRecording, stopRecording]);
 
   const onChatClick = useCallback(() => {
-    if (viewMode === "chat") {
+    if (viewMode === 'chat') {
       // Toggle back to UI if exists, else Voice
       if (uiComponents.length > 0) {
-        setViewMode("ui");
+        setViewMode('ui');
       } else {
-        setViewMode("voice");
+        setViewMode('voice');
       }
     } else {
-      setViewMode("chat");
+      setViewMode('chat');
     }
   }, [viewMode, uiComponents.length]);
 
@@ -215,7 +260,7 @@ export default function AssistantScreen() {
     (message: string) => {
       addTranscription(USER_ID, message);
       sendText(message);
-      setChatMessage("");
+      setChatMessage('');
     },
     [sendText, addTranscription]
   );
@@ -224,13 +269,13 @@ export default function AssistantScreen() {
   const renderUIComponent = (component: GenerativeUIEvent) => {
     const props = component.props as Record<string, unknown>;
     console.log(
-      "[FRONTEND-RENDER] >>> Rendering component:",
+      '[FRONTEND-RENDER] >>> Rendering component:',
       component.type,
-      "id:",
+      'id:',
       component.id
     );
     switch (component.type) {
-      case "day_view":
+      case 'day_view':
         return (
           <DayView
             key={component.id}
@@ -238,11 +283,11 @@ export default function AssistantScreen() {
             tasks={(props.tasks as []) || []}
           />
         );
-      case "todo_list":
+      case 'todo_list':
         return (
           <TodoList key={component.id} tasks={(props.tasks as []) || []} />
         );
-      case "calendar_view":
+      case 'calendar_view':
         return (
           <CalendarView
             key={component.id}
@@ -257,21 +302,21 @@ export default function AssistantScreen() {
             key={component.id}
             style={{
               padding: 16,
-              backgroundColor: "#fee2e2",
+              backgroundColor: '#fee2e2',
               borderRadius: 8,
               margin: 8,
             }}
           >
-            <Text style={{ color: "#dc2626", fontWeight: "bold" }}>
+            <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>
               Unknown Component
             </Text>
-            <Text style={{ color: "#dc2626" }}>Type: {component.type}</Text>
+            <Text style={{ color: '#dc2626' }}>Type: {component.type}</Text>
           </View>
         );
     }
   };
 
-  const isCollapsed = viewMode !== "voice" || isPendingUIRender;
+  const isCollapsed = viewMode !== 'voice' || isPendingUIRender;
 
   // Use ref to track pending UI state without causing callback recreation
   const isPendingUIRenderRef = useRef(isPendingUIRender);
@@ -283,7 +328,7 @@ export default function AssistantScreen() {
   // Stable reference prevents animation restart loop
   const handleCollapseComplete = useCallback(() => {
     if (isPendingUIRenderRef.current) {
-      setViewMode("ui"); // Only auto-switch when UI event pending
+      setViewMode('ui'); // Only auto-switch when UI event pending
       setIsPendingUIRender(false);
     }
   }, []); // Empty deps - callback never changes
@@ -301,9 +346,9 @@ export default function AssistantScreen() {
         <Animated.View
           style={[
             {
-              position: "absolute",
+              position: 'absolute',
               zIndex: 1,
-              backgroundColor: "transparent",
+              backgroundColor: 'transparent',
               ...agentVisualizationPosition,
             },
           ]}
@@ -317,11 +362,12 @@ export default function AssistantScreen() {
 
         {/* 2. Middle: Content Switcher */}
         <View style={styles.middleContainer}>
-          {viewMode === "chat" && (
+          {viewMode === 'chat' && (
             <>
               <ChatLog
                 style={styles.logContainer}
                 transcriptions={transcriptions}
+                streamingTranscription={streamingTranscription}
               />
               <ChatBar
                 style={styles.chatBar}
@@ -332,7 +378,7 @@ export default function AssistantScreen() {
             </>
           )}
 
-          {viewMode === "ui" && (
+          {viewMode === 'ui' && (
             <ScrollView style={styles.generativeUIContainer}>
               {/* Render the latest component or all? Typically focused view is one. */}
               {/* Mapping all for now to preserve history if desired, but user said "render appears in the middle" */}
@@ -340,7 +386,7 @@ export default function AssistantScreen() {
             </ScrollView>
           )}
           {/* Spacer for Voice Mode to push agent to center (handled by absolute positioning of agent) */}
-          {viewMode === "voice" && <View style={styles.spacer} />}
+          {viewMode === 'voice' && <View style={styles.spacer} />}
         </View>
 
         {/* 3. Bottom: Control Bar (Always present) */}
@@ -349,7 +395,7 @@ export default function AssistantScreen() {
           options={{
             isMicEnabled,
             isCameraEnabled: false,
-            isChatEnabled: viewMode === "chat",
+            isChatEnabled: viewMode === 'chat',
             onMicClick,
             onCameraClick: () => {}, // No camera in WebSocket mode
             onChatClick,
@@ -364,26 +410,26 @@ export default function AssistantScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#000000",
+    backgroundColor: '#000000',
   },
   container: {
-    width: "100%",
-    height: "100%",
-    alignItems: "center",
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
   },
   spacer: {
-    height: "24%", // Adjust if needed for voice mode centering
+    height: '24%', // Adjust if needed for voice mode centering
   },
   middleContainer: {
     flex: 1,
-    width: "100%",
-    marginTop: "32%", // Space for collapsed pulse at top with breathing room
+    width: '100%',
+    marginTop: '32%', // Space for collapsed pulse at top with breathing room
     marginBottom: 80, // Space for ControlBar at bottom
   },
   logContainer: {
-    width: "100%",
+    width: '100%',
     flexGrow: 1,
-    flexDirection: "column",
+    flexDirection: 'column',
     marginBottom: 8,
   },
   chatBar: {
@@ -393,7 +439,7 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   controlBar: {
-    position: "absolute",
+    position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
@@ -402,13 +448,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   agentVisualization: {
-    width: "100%",
-    height: "100%",
+    width: '100%',
+    height: '100%',
   },
   generativeUIContainer: {
     flex: 1,
-    width: "100%",
-    backgroundColor: "#000000",
+    width: '100%',
+    backgroundColor: '#000000',
   },
 });
 
@@ -519,16 +565,16 @@ const useAgentVisualizationPosition = (
   return {
     left: x.interpolate({
       inputRange: [0, 1],
-      outputRange: ["0%", "100%"],
+      outputRange: ['0%', '100%'],
     }),
     top: y,
     width: width.interpolate({
       inputRange: [0, 1],
-      outputRange: ["0%", "100%"],
+      outputRange: ['0%', '100%'],
     }),
     height: height.interpolate({
       inputRange: [0, 1],
-      outputRange: ["0%", "100%"],
+      outputRange: ['0%', '100%'],
     }),
   };
 };
