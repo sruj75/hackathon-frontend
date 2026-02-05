@@ -81,6 +81,7 @@ export function useWebSocketAgent(
     // NOTE: If production requires a separate WebSocket URL (different port/host),
     // add EXPO_PUBLIC_WS_URL env var and use it here as override.
     const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+    console.log('DEBUG: EXPO_PUBLIC_BACKEND_URL =', baseUrl);
     if (!baseUrl) {
       throw new Error('EXPO_PUBLIC_BACKEND_URL not configured');
     }
