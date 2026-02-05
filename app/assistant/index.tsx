@@ -9,7 +9,7 @@ import {
 
 import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import ControlBar from '../../components/assistant/ControlBar';
 import ChatBar from '../../components/assistant/ChatBar';
 import ChatLog from '../../components/assistant/ChatLog';
@@ -25,6 +25,7 @@ import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
 import { DayView } from '../../components/generative/DayView';
 import { TodoList } from '../../components/generative/TodoList';
 import { CalendarView } from '../../components/generative/CalendarView';
+import { StopReflectAct } from '../../components/generative/StopReflectAct';
 
 // Generate unique IDs for this session
 const userId = `user-${Date.now()}`;
@@ -37,9 +38,12 @@ interface Transcription {
 }
 
 type ViewMode = 'voice' | 'chat' | 'ui';
+type DemoScenario = 'morning_braindump' | 'post_meeting_checkin';
 
 export default function AssistantScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const scenario = (params.scenario as DemoScenario) || 'morning_braindump';
 
   // WebSocket connection
   const {
@@ -64,17 +68,35 @@ export default function AssistantScreen() {
   const [chatMessage, setChatMessage] = useState('');
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
 
+  // Streaming state for accumulating partial responses
+  const [streamingTranscription, setStreamingTranscription] = useState<{
+    participant: string;
+    text: string;
+  } | null>(null);
+
   // Generative UI State
   const [uiComponents, setUIComponents] = useState<GenerativeUIEvent[]>([]);
   const [isPendingUIRender, setIsPendingUIRender] = useState(false);
 
-  // Connect on mount
+  // Connect on mount and send scenario context
   useEffect(() => {
     connect();
     return () => {
       disconnect();
     };
   }, [connect, disconnect]);
+
+  // Send scenario context to agent after WebSocket connects
+  const hasSentScenarioRef = useRef(false);
+  useEffect(() => {
+    if (wsState.isConnected && !hasSentScenarioRef.current) {
+      // Send scenario as initial context message
+      const scenarioMessage = `[SCENARIO: ${scenario}]`;
+      console.log('📤 Sending scenario to agent:', scenarioMessage);
+      sendText(scenarioMessage);
+      hasSentScenarioRef.current = true;
+    }
+  }, [wsState.isConnected, scenario, sendText]);
 
   // Auto-start recording when WebSocket connects for real-time streaming
   const hasAutoStartedRef = React.useRef(false);
@@ -135,7 +157,7 @@ export default function AssistantScreen() {
         addTranscription(userId, event.serverContent.inputTranscription.text);
       }
 
-      // Handle output transcription (agent speech)
+      // Handle output transcription (agent speech) - already complete
       if (event.serverContent?.outputTranscription?.text) {
         console.log(
           '[CHAT] Received output transcription:',
@@ -144,14 +166,53 @@ export default function AssistantScreen() {
         addTranscription('Agent', event.serverContent.outputTranscription.text);
       }
 
-      // Handle text responses (Chat Mode)
+      // Handle text responses (Chat Mode) - with streaming support
       if (event.content?.parts) {
         for (const part of event.content.parts) {
           if (part.text) {
-            console.log('[CHAT] Received text part:', part.text);
-            addTranscription('Agent', part.text);
+            const textContent = part.text;
+            console.log(
+              '[CHAT] Received text part:',
+              textContent,
+              'partial:',
+              event.partial
+            );
+
+            if (event.partial) {
+              // Accumulate partial responses
+              setStreamingTranscription((prev) => {
+                if (prev) {
+                  // Append to existing streaming text
+                  return {
+                    participant: 'Agent',
+                    text: prev.text + textContent,
+                  };
+                } else {
+                  // Start new streaming text
+                  return {
+                    participant: 'Agent',
+                    text: textContent,
+                  };
+                }
+              });
+            } else {
+              // Non-partial response - add directly
+              addTranscription('Agent', textContent);
+            }
           }
         }
+      }
+
+      // Handle turn completion - finalize streaming transcription
+      if (event.turnComplete) {
+        console.log('[CHAT] Turn complete, finalizing streaming transcription');
+        setStreamingTranscription((prev) => {
+          if (prev && prev.text) {
+            // Move streaming text to final transcriptions
+            addTranscription(prev.participant, prev.text);
+          }
+          return null; // Clear streaming state
+        });
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
@@ -223,6 +284,16 @@ export default function AssistantScreen() {
           <CalendarView
             key={component.id}
             events={(props.events as []) || []}
+          />
+        );
+      case 'stop_reflect_act':
+        return (
+          <StopReflectAct
+            key={component.id}
+            phase={(props.phase as 'stop' | 'reflect' | 'act') || 'stop'}
+            title={(props.title as string) || ''}
+            prompt={(props.prompt as string) || ''}
+            action_items={(props.action_items as string[]) || undefined}
           />
         );
       default:
@@ -298,6 +369,7 @@ export default function AssistantScreen() {
               <ChatLog
                 style={styles.logContainer}
                 transcriptions={transcriptions}
+                streamingTranscription={streamingTranscription}
               />
               <ChatBar
                 style={styles.chatBar}

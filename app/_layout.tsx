@@ -30,8 +30,19 @@ export default function RootLayout() {
           response.notification.request.content
         );
 
-        // Navigate to assistant screen when notification is tapped
-        router.push('/assistant');
+        // Extract scenario from notification data
+        const data = response.notification.request.content.data as
+          | { scenario?: string }
+          | undefined;
+        const scenario: string = data?.scenario || 'morning_braindump'; // Default to morning
+
+        console.log('🎯 Scenario:', scenario);
+
+        // Navigate to assistant screen with scenario parameter
+        router.push({
+          pathname: '/assistant',
+          params: { scenario },
+        });
       });
 
     // Cleanup

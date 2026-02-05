@@ -15,7 +15,9 @@ type DemoScenario = 'morning_braindump' | 'post_meeting_checkin';
 
 export default function StartScreen() {
   const [isSending, setIsSending] = useState(false);
-  const [activeScenario, setActiveScenario] = useState<DemoScenario | null>(null);
+  const [activeScenario, setActiveScenario] = useState<DemoScenario | null>(
+    null
+  );
   // Initialize notifications (sets up permissions)
   useNotifications();
 
@@ -72,28 +74,76 @@ export default function StartScreen() {
         style={styles.logo}
         source={require('../../assets/images/start-logo.png')}
       />
-      <Text style={styles.text}>Chat live with your voice AI agent</Text>
+      <Text style={styles.text}>Choose your demo scenario</Text>
 
+      {/* Demo Note */}
+      <View style={styles.demoNote}>
+        <Text style={styles.demoNoteText}>
+          These scenarios use mock data and on-demand notifications for
+          presentation purposes. In production, the agent proactively triggers
+          notifications based on your calendar and daily context.
+        </Text>
+      </View>
+
+      {/* Demo 1: Morning Brain Dump */}
       <TouchableOpacity
-        onPress={handleConnect}
-        style={styles.button}
+        onPress={() => handleDemoNotification('morning_braindump')}
+        style={[styles.button, styles.buttonMorning]}
         activeOpacity={0.7}
         disabled={isSending}
       >
-        {isSending ? (
+        {isSending && activeScenario === 'morning_braindump' ? (
           <ActivityIndicator
             size="small"
             color="#ffffff"
             style={styles.activityIndicator}
           />
-        ) : undefined}
+        ) : (
+          <Text style={styles.buttonEmoji}>☀️</Text>
+        )}
 
-        <Text style={styles.buttonText}>{connectText}</Text>
+        <Text style={styles.buttonText}>
+          {isSending && activeScenario === 'morning_braindump'
+            ? 'Sending...'
+            : 'Demo 1: Morning Brain Dump'}
+        </Text>
       </TouchableOpacity>
 
+      <Text style={styles.demoDescription}>
+        Plan your day with AI-powered task organization
+      </Text>
+
+      {/* Demo 2: Post-Meeting Check-in */}
+      <TouchableOpacity
+        onPress={() => handleDemoNotification('post_meeting_checkin')}
+        style={[styles.button, styles.buttonCheckin]}
+        activeOpacity={0.7}
+        disabled={isSending}
+      >
+        {isSending && activeScenario === 'post_meeting_checkin' ? (
+          <ActivityIndicator
+            size="small"
+            color="#ffffff"
+            style={styles.activityIndicator}
+          />
+        ) : (
+          <Text style={styles.buttonEmoji}>💭</Text>
+        )}
+
+        <Text style={styles.buttonText}>
+          {isSending && activeScenario === 'post_meeting_checkin'
+            ? 'Sending...'
+            : 'Demo 2: Emotional Support'}
+        </Text>
+      </TouchableOpacity>
+
+      <Text style={styles.demoDescription}>
+        STOP-REFLECT-ACT model for emotional regulation
+      </Text>
+
       <Text style={styles.hintText}>
-        Tap the button to receive a notification. Then tap the notification to
-        start chatting!
+        Tap a button to receive a notification. Then tap the notification to
+        start the demo!
       </Text>
     </View>
   );
@@ -113,30 +163,66 @@ const styles = StyleSheet.create({
   },
   text: {
     color: '#ffffff',
+    marginBottom: 16,
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  demoNote: {
+    backgroundColor: '#1a2332',
+    borderLeftWidth: 3,
+    borderLeftColor: '#4A90D9',
+    borderRadius: 8,
+    padding: 12,
     marginBottom: 24,
-    fontSize: 16,
+    marginHorizontal: 16,
+    maxWidth: 340,
+  },
+  demoNoteText: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'left',
   },
   activityIndicator: {
     marginEnd: 8,
   },
   button: {
     flexDirection: 'row',
-    backgroundColor: '#002CF2',
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 24,
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 200,
+    minWidth: 280,
+    marginTop: 12,
+  },
+  buttonMorning: {
+    backgroundColor: '#4A90D9',
+  },
+  buttonCheckin: {
+    backgroundColor: '#9B59B6',
+  },
+  buttonEmoji: {
+    fontSize: 20,
+    marginRight: 8,
   },
   buttonText: {
     color: '#ffffff',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  demoDescription: {
+    color: '#888888',
+    fontSize: 13,
+    marginTop: 8,
+    marginBottom: 16,
+    textAlign: 'center',
+    maxWidth: 280,
   },
   hintText: {
     color: '#666666',
     fontSize: 13,
-    marginTop: 24,
+    marginTop: 32,
     textAlign: 'center',
     maxWidth: 300,
     lineHeight: 20,

@@ -5,7 +5,7 @@
  * on the frontend via tool calls.
  */
 
-// Component type union (strict allowlist of 8 components)
+// Component type union (strict allowlist of 9 components)
 export type GenerativeUIType =
   | "day_view"
   | "task_card"
@@ -14,7 +14,8 @@ export type GenerativeUIType =
   | "goal_progress"
   | "day_summary"
   | "confirmation"
-  | "current_focus";
+  | "current_focus"
+  | "stop_reflect_act";
 
 // Base event structure
 export interface GenerativeUIEvent {
@@ -34,7 +35,8 @@ export type GenerativeUIProps =
   | GoalProgressProps
   | DaySummaryProps
   | ConfirmationProps
-  | CurrentFocusProps;
+  | CurrentFocusProps
+  | StopReflectActProps;
 
 // ============================================
 // Shared Types
@@ -114,4 +116,12 @@ export interface ConfirmationProps {
 export interface CurrentFocusProps {
   event?: CalendarEvent;
   next_event?: CalendarEvent;
+}
+
+// 9. StopReflectAct - Emotional regulation wizard
+export interface StopReflectActProps {
+  phase: 'stop' | 'reflect' | 'act';
+  title: string;
+  prompt: string;
+  action_items?: string[];
 }
