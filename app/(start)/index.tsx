@@ -1,4 +1,3 @@
-import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   StyleSheet,
@@ -7,31 +6,65 @@ import {
   Text,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import { useNotifications } from '@/hooks/useNotifications';
+
+type DemoScenario = 'morning_braindump' | 'post_meeting_checkin';
 
 export default function StartScreen() {
-  const router = useRouter();
-  const [isConnecting, setConnecting] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [activeScenario, setActiveScenario] = useState<DemoScenario | null>(null);
+  // Initialize notifications (sets up permissions)
+  useNotifications();
 
-  const handleConnect = () => {
-    setConnecting(true);
+  const handleDemoNotification = async (scenario: DemoScenario) => {
+    setIsSending(true);
+    setActiveScenario(scenario);
 
-    // Check if backend URL is configured
-    const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
-    if (!backendUrl) {
-      console.error('EXPO_PUBLIC_BACKEND_URL not configured');
-      setConnecting(false);
-      return;
+    try {
+      // Configure notification based on scenario
+      const notificationConfig = {
+        morning_braindump: {
+          title: 'Good Morning! ☀️',
+          body: "Let's plan your day together",
+        },
+        post_meeting_checkin: {
+          title: 'Meeting Check-in 💭',
+          body: 'How did your meeting go?',
+        },
+      };
+
+      const config = notificationConfig[scenario];
+
+      // Send local notification immediately
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: config.title,
+          body: config.body,
+          data: { screen: 'assistant', scenario },
+          sound: true,
+        },
+        trigger: null, // null = immediate delivery
+      });
+
+      setIsSending(false);
+      setActiveScenario(null);
+
+      // Show feedback to user
+      Alert.alert(
+        'Notification Sent!',
+        'Check your lock screen and tap the notification to open the agent',
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.error('Failed to send notification:', error);
+      setIsSending(false);
+      setActiveScenario(null);
+      Alert.alert('Error', 'Failed to send notification. Please try again.');
     }
-
-    // Navigate to assistant screen - connection happens there
-    setTimeout(() => {
-      setConnecting(false);
-      router.navigate('../assistant');
-    }, 500);
   };
-
-  const connectText = isConnecting ? 'Connecting' : 'Start Voice Assistant';
 
   return (
     <View style={styles.container}>
@@ -45,9 +78,9 @@ export default function StartScreen() {
         onPress={handleConnect}
         style={styles.button}
         activeOpacity={0.7}
-        disabled={isConnecting}
+        disabled={isSending}
       >
-        {isConnecting ? (
+        {isSending ? (
           <ActivityIndicator
             size="small"
             color="#ffffff"
@@ -57,6 +90,11 @@ export default function StartScreen() {
 
         <Text style={styles.buttonText}>{connectText}</Text>
       </TouchableOpacity>
+
+      <Text style={styles.hintText}>
+        Tap the button to receive a notification. Then tap the notification to
+        start chatting!
+      </Text>
     </View>
   );
 }
@@ -66,6 +104,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 20,
   },
   logo: {
     width: 59,
@@ -75,6 +114,7 @@ const styles = StyleSheet.create({
   text: {
     color: '#ffffff',
     marginBottom: 24,
+    fontSize: 16,
   },
   activityIndicator: {
     marginEnd: 8,
@@ -83,7 +123,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#002CF2',
     paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: 24,
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
@@ -91,5 +131,14 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#ffffff',
+    fontSize: 16,
+  },
+  hintText: {
+    color: '#666666',
+    fontSize: 13,
+    marginTop: 24,
+    textAlign: 'center',
+    maxWidth: 300,
+    lineHeight: 20,
   },
 });
