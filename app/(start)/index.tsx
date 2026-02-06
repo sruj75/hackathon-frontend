@@ -2,7 +2,6 @@ import { useState } from 'react';
 import {
   StyleSheet,
   View,
-  Image,
   Text,
   TouchableOpacity,
   ActivityIndicator,
@@ -40,7 +39,7 @@ export default function StartScreen() {
 
       const config = notificationConfig[scenario];
 
-      // Send local notification immediately
+      // Schedule notification with 5 second delay (gives time to lock device)
       await Notifications.scheduleNotificationAsync({
         content: {
           title: config.title,
@@ -48,7 +47,11 @@ export default function StartScreen() {
           data: { screen: 'assistant', scenario },
           sound: true,
         },
-        trigger: null, // null = immediate delivery
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+          seconds: 3,
+          repeats: false,
+        },
       });
 
       setIsSending(false);
@@ -70,22 +73,14 @@ export default function StartScreen() {
 
   return (
     <View style={styles.container}>
-      <Image
-        style={styles.logo}
-        source={require('../../assets/images/start-logo.png')}
-      />
-      <Text style={styles.text}>Choose your demo scenario</Text>
-
-      {/* Demo Note */}
-      <View style={styles.demoNote}>
-        <Text style={styles.demoNoteText}>
-          These scenarios use mock data and on-demand notifications for
-          presentation purposes. In production, the agent proactively triggers
-          notifications based on your calendar and daily context.
-        </Text>
-      </View>
-
-      {/* Demo 1: Morning Brain Dump */}
+      <Text style={styles.text}>Pick a demo and lock your screen</Text>
+      <Text style={styles.noteText}>
+        You'll receive a notification to experiance a mock proactive check in.
+        In production, notifications are triggered autonomously by the agent.
+      </Text>
+      <Text style={styles.subNoteText}>
+        Backend may take a moment to initialize on first request.
+      </Text>
       <TouchableOpacity
         onPress={() => handleDemoNotification('morning_braindump')}
         style={[styles.button, styles.buttonMorning]}
@@ -105,13 +100,9 @@ export default function StartScreen() {
         <Text style={styles.buttonText}>
           {isSending && activeScenario === 'morning_braindump'
             ? 'Sending...'
-            : 'Demo 1: Morning Brain Dump'}
+            : 'Demo 1: Morning Chaos'}
         </Text>
       </TouchableOpacity>
-
-      <Text style={styles.demoDescription}>
-        Plan your day with AI-powered task organization
-      </Text>
 
       {/* Demo 2: Post-Meeting Check-in */}
       <TouchableOpacity
@@ -137,14 +128,7 @@ export default function StartScreen() {
         </Text>
       </TouchableOpacity>
 
-      <Text style={styles.demoDescription}>
-        STOP-REFLECT-ACT model for emotional regulation
-      </Text>
-
-      <Text style={styles.hintText}>
-        Tap a button to receive a notification. Then tap the notification to
-        start the demo!
-      </Text>
+      {/* Demo 1: Morning Brain Dump */}
     </View>
   );
 }
@@ -163,9 +147,28 @@ const styles = StyleSheet.create({
   },
   text: {
     color: '#ffffff',
-    marginBottom: 16,
-    fontSize: 18,
+    marginBottom: 8,
+    fontSize: 16,
     fontWeight: '600',
+    textAlign: 'center',
+    opacity: 0.9,
+  },
+  noteText: {
+    color: '#ffffff',
+    marginBottom: 8,
+    fontSize: 13,
+    fontWeight: '400',
+    textAlign: 'center',
+    opacity: 0.6,
+    lineHeight: 18,
+  },
+  subNoteText: {
+    color: '#ffffff',
+    marginBottom: 20,
+    fontSize: 11,
+    fontWeight: '300',
+    textAlign: 'center',
+    opacity: 0.4,
   },
   demoNote: {
     backgroundColor: '#1a2332',

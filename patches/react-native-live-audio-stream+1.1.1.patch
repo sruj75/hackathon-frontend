@@ -1,8 +1,84 @@
+diff --git a/node_modules/react-native-live-audio-stream/index.js b/node_modules/react-native-live-audio-stream/index.js
+index c5968b2..e361f7f 100644
+--- a/node_modules/react-native-live-audio-stream/index.js
++++ b/node_modules/react-native-live-audio-stream/index.js
+@@ -7,6 +7,14 @@ const AudioRecord = {};
+ AudioRecord.init = options => RNLiveAudioStream.init(options);
+ AudioRecord.start = () => RNLiveAudioStream.start();
+ AudioRecord.stop = () => RNLiveAudioStream.stop();
++AudioRecord.forceSpeaker = () =>
++  RNLiveAudioStream.forceSpeaker
++    ? RNLiveAudioStream.forceSpeaker()
++    : Promise.resolve(null);
++AudioRecord.getAudioRoute = () =>
++  RNLiveAudioStream.getAudioRoute
++    ? RNLiveAudioStream.getAudioRoute()
++    : Promise.resolve(null);
+ 
+ const eventsMap = {
+   data: 'data'
 diff --git a/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m b/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m
-index a6f2317..8a11f90 100644
+index a6f2317..e86deee 100644
 --- a/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m
 +++ b/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m
-@@ -32,10 +32,11 @@ @implementation RNLiveAudioStream
+@@ -4,6 +4,56 @@ @implementation RNLiveAudioStream
+ 
+ RCT_EXPORT_MODULE();
+ 
++- (NSDictionary *)currentRouteInfoForSession:(AVAudioSession *)audioSession {
++    NSMutableArray *outputs = [NSMutableArray array];
++    for (AVAudioSessionPortDescription *output in audioSession.currentRoute.outputs) {
++        [outputs addObject:@{
++            @"portType": output.portType ?: @"",
++            @"portName": output.portName ?: @""
++        }];
++    }
++
++    NSMutableArray *inputs = [NSMutableArray array];
++    for (AVAudioSessionPortDescription *input in audioSession.currentRoute.inputs) {
++        [inputs addObject:@{
++            @"portType": input.portType ?: @"",
++            @"portName": input.portName ?: @""
++        }];
++    }
++
++    return @{
++        @"category": audioSession.category ?: @"",
++        @"mode": audioSession.mode ?: @"",
++        @"outputs": outputs,
++        @"inputs": inputs
++    };
++}
++
++RCT_REMAP_METHOD(forceSpeaker,
++                 forceSpeakerWithResolver:(RCTPromiseResolveBlock)resolve
++                 rejecter:(RCTPromiseRejectBlock)reject) {
++    AVAudioSession *audioSession = [AVAudioSession sharedInstance];
++    NSError *error = nil;
++    BOOL success = [audioSession setActive:YES error:&error];
++    if (success) {
++        success = [audioSession overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];
++    }
++
++    if (!success || error != nil) {
++        reject(@"force_speaker_failed", @"Failed to force speaker output", error);
++        return;
++    }
++
++    resolve([self currentRouteInfoForSession:audioSession]);
++}
++
++RCT_REMAP_METHOD(getAudioRoute,
++                 getAudioRouteWithResolver:(RCTPromiseResolveBlock)resolve
++                 rejecter:(RCTPromiseRejectBlock)reject) {
++    AVAudioSession *audioSession = [AVAudioSession sharedInstance];
++    resolve([self currentRouteInfoForSession:audioSession]);
++}
++
+ RCT_EXPORT_METHOD(init:(NSDictionary *) options) {
+     RCTLogInfo(@"[RNLiveAudioStream] init");
+     _recordState.mDataFormat.mSampleRate        = options[@"sampleRate"] == nil ? 44100 : [options[@"sampleRate"] doubleValue];
+@@ -32,10 +82,11 @@ RCT_EXPORT_METHOD(start) {
                                         mode: AVAudioSessionModeVoiceChat
                                      options: AVAudioSessionCategoryOptionDuckOthers |
                                               AVAudioSessionCategoryOptionAllowBluetooth |
@@ -16,3 +92,18 @@ index a6f2317..8a11f90 100644
          success = [audioSession setMode: AVAudioSessionModeVoiceChat error: &error] && success;
      }
      if (!success || error != nil) {
+@@ -43,6 +94,14 @@ RCT_EXPORT_METHOD(start) {
+         return;
+     }
+ 
++    success = [audioSession setActive:YES error:&error] && success;
++    success = [audioSession overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error] && success;
++    if (!success || error != nil) {
++        RCTLog(@"[RNLiveAudioStream] Problem forcing speaker route. Error: %@", error);
++        return;
++    }
++    RCTLogInfo(@"[RNLiveAudioStream] Route after start: %@", [self currentRouteInfoForSession:audioSession]);
++
+     _recordState.mIsRunning = true;
+ 
+     OSStatus status = AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);

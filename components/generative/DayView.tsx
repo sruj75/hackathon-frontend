@@ -1,7 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { DayViewProps } from '@/types/generativeUI.types';
-import { TaskCard } from './TaskCard';
 
 /**
  * DayView - Unified timeline showing today's schedule + pending tasks
@@ -36,7 +35,15 @@ export function DayView({ events, tasks }: DayViewProps) {
               📋 To Do ({pendingTasks.length})
             </Text>
             {pendingTasks.map((task) => (
-              <TaskCard key={task.id} task={task} />
+              <View key={task.id} style={styles.taskCard}>
+                <Text style={styles.taskTitle}>{task.title}</Text>
+                {task.notes && (
+                  <Text style={styles.taskNotes}>{task.notes}</Text>
+                )}
+                {task.is_goal_linked && (
+                  <Text style={styles.goalBadge}>🎯 Goal-linked</Text>
+                )}
+              </View>
             ))}
           </View>
         )}
@@ -47,7 +54,19 @@ export function DayView({ events, tasks }: DayViewProps) {
               ✅ Done ({completedTasks.length})
             </Text>
             {completedTasks.map((task) => (
-              <TaskCard key={task.id} task={task} />
+              <View
+                key={task.id}
+                style={[styles.taskCard, styles.completedTask]}
+              >
+                <Text style={[styles.taskTitle, styles.completedText]}>
+                  {task.title}
+                </Text>
+                {task.notes && (
+                  <Text style={[styles.taskNotes, styles.completedText]}>
+                    {task.notes}
+                  </Text>
+                )}
+              </View>
             ))}
           </View>
         )}
@@ -75,67 +94,107 @@ function formatTime(isoString: string): string {
 const styles = StyleSheet.create({
   container: {
     backgroundColor: '#1a1a1a',
-    borderRadius: 16,
-    padding: 20,
-    marginVertical: 8,
+    borderRadius: 12,
+    padding: 14,
+    marginVertical: 6,
     marginHorizontal: 16,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.22,
+    shadowRadius: 5,
+    elevation: 3,
   },
   header: {
-    fontSize: 22,
+    fontSize: 19,
     fontWeight: '700',
     color: '#fff',
-    marginBottom: 16,
-    letterSpacing: 0.5,
+    marginBottom: 10,
+    letterSpacing: 0.3,
   },
   timeline: {
-    maxHeight: 400,
+    maxHeight: 520,
   },
   section: {
-    marginBottom: 20,
+    marginBottom: 12,
   },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#9CA3AF',
-    marginBottom: 12,
+    marginBottom: 8,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.8,
   },
   eventCard: {
     backgroundColor: '#1e2838',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 6,
     borderLeftWidth: 4,
     borderLeftColor: '#4A90D9',
     shadowColor: '#4A90D9',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.16,
+    shadowRadius: 2,
+    elevation: 2,
   },
   eventTime: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#60A5FA',
-    marginBottom: 6,
+    marginBottom: 4,
     fontWeight: '600',
   },
   eventTitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#fff',
     fontWeight: '500',
-    lineHeight: 22,
+    lineHeight: 19,
+  },
+  taskCard: {
+    backgroundColor: '#1e2838',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 6,
+    borderLeftWidth: 4,
+    borderLeftColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.16,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  taskTitle: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '500',
+    lineHeight: 19,
+    marginBottom: 2,
+  },
+  taskNotes: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  goalBadge: {
+    fontSize: 10,
+    color: '#FBBF24',
+    fontWeight: '600',
+    marginTop: 6,
+  },
+  completedTask: {
+    opacity: 0.6,
+    borderLeftColor: '#6B7280',
+  },
+  completedText: {
+    textDecorationLine: 'line-through',
+    color: '#9CA3AF',
   },
   emptyText: {
     color: '#6B7280',
     textAlign: 'center',
-    marginTop: 32,
-    fontSize: 14,
+    marginTop: 24,
+    fontSize: 13,
     fontStyle: 'italic',
   },
 });

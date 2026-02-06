@@ -1,28 +1,29 @@
 {
-    "cli": {
-        "version": ">= 13.0.0",
-        "appVersionSource": "remote"
+  "cli": {
+    "version": ">= 13.0.0",
+    "appVersionSource": "remote",
+    "promptToConfigurePushNotifications": false
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "node": "20.19.4",
+      "ios": {
+        "simulator": false
+      }
     },
-    "build": {
-        "development": {
-            "developmentClient": true,
-            "distribution": "internal",
-            "node": "20.19.4",
-            "ios": {
-                "simulator": false
-            }
-        },
-        "preview": {
-            "distribution": "internal",
-            "ios": {
-                "simulator": false
-            }
-        },
-        "production": {
-            "autoIncrement": true
-        }
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      }
     },
-    "submit": {
-        "production": {}
+    "production": {
+      "autoIncrement": true
     }
+  },
+  "submit": {
+    "production": {}
+  }
 }

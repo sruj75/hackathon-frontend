@@ -2,6 +2,75 @@ import { useCallback, useRef, useState, useEffect } from 'react';
 import LiveAudioStream from 'react-native-live-audio-stream';
 import { Audio, InterruptionModeIOS } from 'expo-av';
 
+const AUDIO_DEBUG = __DEV__;
+
+function audioLog(event: string, payload?: Record<string, unknown>) {
+  if (!AUDIO_DEBUG) {
+    return;
+  }
+  const ts = new Date().toISOString();
+  if (payload) {
+    console.log(`[AUDIO][${ts}] ${event}`, payload);
+    return;
+  }
+  console.log(`[AUDIO][${ts}] ${event}`);
+}
+
+function audioError(event: string, error: unknown) {
+  if (!AUDIO_DEBUG) {
+    return;
+  }
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+      ? error
+      : 'Unknown error';
+  console.error(`[AUDIO] ${event}`, { message, raw: error });
+}
+
+type LiveAudioStreamRoutingModule = {
+  forceSpeaker?: () => Promise<unknown>;
+  getAudioRoute?: () => Promise<unknown>;
+};
+
+const liveAudioRouting =
+  LiveAudioStream as unknown as LiveAudioStreamRoutingModule;
+
+async function logNativeAudioRoute(reason: string) {
+  if (!liveAudioRouting.getAudioRoute) {
+    audioLog('route.snapshot.unavailable', { reason });
+    return;
+  }
+  try {
+    const route = await liveAudioRouting.getAudioRoute();
+    if (route == null) {
+      audioLog('route.snapshot.unavailable', { reason });
+      return;
+    }
+    audioLog('route.snapshot', { reason, route });
+  } catch (error) {
+    audioError(`route.snapshot.failed.${reason}`, error);
+  }
+}
+
+async function forceSpeakerRoute(reason: string) {
+  if (!liveAudioRouting.forceSpeaker) {
+    audioLog('route.forceSpeaker.unavailable', { reason });
+    return;
+  }
+  try {
+    const route = await liveAudioRouting.forceSpeaker();
+    if (route == null) {
+      audioLog('route.forceSpeaker.unavailable', { reason });
+      return;
+    }
+    audioLog('route.forceSpeaker.success', { reason, route });
+  } catch (error) {
+    audioError(`route.forceSpeaker.failed.${reason}`, error);
+  }
+}
+
 export interface UseAudioRecordingReturn {
   isRecording: boolean;
   startRecording: () => Promise<void>;
@@ -14,77 +83,155 @@ export function useAudioRecording(): UseAudioRecordingReturn {
   const audioDataCallbackRef = useRef<((data: ArrayBuffer) => void) | null>(
     null
   );
+  const isInitializedRef = useRef(false);
+  const initPromiseRef = useRef<Promise<void> | null>(null);
+  const micChunkCountRef = useRef(0);
+  const micByteCountRef = useRef(0);
+  const micLastStatsLogMsRef = useRef(Date.now());
 
-  useEffect(() => {
-    // Initialize the audio stream
-    LiveAudioStream.init({
-      sampleRate: 16000,
-      channels: 1,
-      bitsPerSample: 16,
-      audioSource: 6, // VOICE_RECOGNITION on Android
-      bufferSize: 4096,
-      wavFile: 'audio.wav', // Required prop, but we use the stream
-    });
+  const initializeAudioSessionAndStream = useCallback(async () => {
+    if (isInitializedRef.current) {
+      audioLog('recording.init.skipped.alreadyInitialized');
+      return;
+    }
 
-    LiveAudioStream.on('data', (data: string) => {
-      if (audioDataCallbackRef.current) {
-        // data is base64 encoded PCM 16-bit
-        const binaryString = atob(data);
+    if (initPromiseRef.current) {
+      audioLog('recording.init.awaitExistingPromise');
+      await initPromiseRef.current;
+      return;
+    }
 
-        // Simple audio level monitoring (log occasionally to reduce spam)
-        if (Math.random() < 0.05) {
-          // Log 5% of chunks
-          let audioLevel = 0;
-          for (let i = 0; i < Math.min(50, binaryString.length); i++) {
-            audioLevel = Math.max(
-              audioLevel,
-              Math.abs(binaryString.charCodeAt(i) - 128)
-            );
+    audioLog('recording.init.start');
+    initPromiseRef.current = (async () => {
+      try {
+        // Configure expo-av first, then let LiveAudioStream set category/mode last.
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: true,
+          interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+        audioLog('recording.mode.set.success', {
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+          interruptionModeIOS: 'DoNotMix',
+          playThroughEarpieceAndroid: false,
+        });
+        await logNativeAudioRoute('after_expo_audio_mode_set');
+      } catch (error) {
+        audioError('recording.mode.set.failed', error);
+      }
+
+      audioLog('recording.stream.init');
+      LiveAudioStream.init({
+        sampleRate: 16000,
+        channels: 1,
+        bitsPerSample: 16,
+        audioSource: 6, // VOICE_RECOGNITION on Android
+        bufferSize: 4096,
+        wavFile: 'audio.wav', // Required prop, but we use the stream
+      });
+      await logNativeAudioRoute('after_live_stream_init');
+
+      LiveAudioStream.on('data', (data: string) => {
+        if (audioDataCallbackRef.current) {
+          // data is base64 encoded PCM 16-bit
+          const binaryString = atob(data);
+          micChunkCountRef.current += 1;
+          micByteCountRef.current += binaryString.length;
+
+          const now = Date.now();
+          if (now - micLastStatsLogMsRef.current >= 2000) {
+            audioLog('recording.mic.stats', {
+              chunks: micChunkCountRef.current,
+              bytes: micByteCountRef.current,
+              avgChunkBytes:
+                micChunkCountRef.current > 0
+                  ? Math.round(
+                      micByteCountRef.current / micChunkCountRef.current
+                    )
+                  : 0,
+            });
+            micChunkCountRef.current = 0;
+            micByteCountRef.current = 0;
+            micLastStatsLogMsRef.current = now;
           }
-          console.log(`🎤 ${binaryString.length}B | Level: ${audioLevel}`);
+
+          // Convert base64 PCM to byte array for upstream websocket streaming.
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          audioDataCallbackRef.current(bytes.buffer);
         }
+      });
 
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        audioDataCallbackRef.current(bytes.buffer);
-      }
-    });
+      isInitializedRef.current = true;
+      audioLog('recording.init.success');
+    })();
 
-    return () => {
-      LiveAudioStream.stop();
-    };
-  }, []);
-
-  const startRecording = useCallback(async () => {
     try {
-      // Check permissions using expo-av (since LiveAudioStream doesn't expose permission check)
-      // Or just trust the app has them from usage description
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
-        throw new Error('Microphone permission not granted');
-      }
-
-      LiveAudioStream.start();
-
-      setIsRecording(true);
-      console.log(
-        'Real-time audio streaming started (react-native-live-audio-stream)'
-      );
+      await initPromiseRef.current;
     } catch (error) {
-      console.error('Failed to start recording:', error);
-      setIsRecording(false);
+      initPromiseRef.current = null;
+      audioError('recording.init.failed', error);
       throw error;
     }
   }, []);
 
+  useEffect(() => {
+    initializeAudioSessionAndStream().catch((error) => {
+      audioError('recording.effect.init.failed', error);
+    });
+
+    return () => {
+      audioLog('recording.effect.cleanup.stopStream');
+      LiveAudioStream.stop();
+    };
+  }, [initializeAudioSessionAndStream]);
+
+  const startRecording = useCallback(async () => {
+    try {
+      audioLog('recording.start.requested');
+      await initializeAudioSessionAndStream();
+
+      // Check permissions using expo-av (since LiveAudioStream doesn't expose permission check)
+      // Or just trust the app has them from usage description
+      const beforePermission = await Audio.getPermissionsAsync();
+      audioLog('recording.permission.current', {
+        status: beforePermission.status,
+        granted: beforePermission.granted,
+        canAskAgain: beforePermission.canAskAgain,
+      });
+
+      const { status } = await Audio.requestPermissionsAsync();
+      audioLog('recording.permission.requestResult', { status });
+      if (status !== 'granted') {
+        throw new Error('Microphone permission not granted');
+      }
+
+      audioLog('recording.stream.start');
+      LiveAudioStream.start();
+      await forceSpeakerRoute('after_live_stream_start');
+
+      setIsRecording(true);
+      audioLog('recording.start.success');
+    } catch (error) {
+      audioError('recording.start.failed', error);
+      setIsRecording(false);
+      throw error;
+    }
+  }, [initializeAudioSessionAndStream]);
+
   const stopRecording = useCallback(async () => {
     try {
+      audioLog('recording.stop.requested');
       LiveAudioStream.stop();
-      console.log('Recording stopped');
+      audioLog('recording.stop.success');
     } catch (error) {
-      console.error('Failed to stop recording:', error);
+      audioError('recording.stop.failed', error);
     }
     setIsRecording(false);
   }, []);
@@ -108,39 +255,35 @@ export interface UseAudioPlaybackReturn {
 }
 
 export function useAudioPlayback(): UseAudioPlaybackReturn {
-  // Re-enabling playback logic delicately
   const [isPlaying, setIsPlaying] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
   const audioQueueRef = useRef<ArrayBuffer[]>([]);
   const isProcessingRef = useRef(false);
-
-  const setupAudioMode = useCallback(async () => {
-    try {
-      // Configure audio mode ONCE for simultaneous recording and playback
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true, // critical: don't kill the mic
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-    } catch (error) {
-      console.error('Failed to set audio mode:', error);
-    }
-  }, []);
-
-  useEffect(() => {
-    setupAudioMode();
-  }, [setupAudioMode]);
+  const queueEnqueueCountRef = useRef(0);
+  const queueEnqueueByteCountRef = useRef(0);
+  const queueLastEnqueueLogMsRef = useRef(Date.now());
+  const playbackBatchIdRef = useRef(0);
+  const playbackSkipLogLastMsRef = useRef(0);
 
   const processQueue = useCallback(async () => {
     if (isProcessingRef.current) {
+      const now = Date.now();
+      if (now - playbackSkipLogLastMsRef.current >= 1000) {
+        audioLog('playback.process.skip.alreadyProcessing', {
+          queueDepth: audioQueueRef.current.length,
+        });
+        playbackSkipLogLastMsRef.current = now;
+      }
       return;
     }
 
+    const batchId = ++playbackBatchIdRef.current;
     isProcessingRef.current = true;
     setIsPlaying(true);
+    audioLog('playback.process.start', {
+      batchId,
+      initialQueueDepth: audioQueueRef.current.length,
+    });
 
     while (audioQueueRef.current.length > 0) {
       // Batching Strategy: Take ALL currently available chunks
@@ -154,6 +297,11 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
         (acc, chunk) => acc + chunk.byteLength,
         0
       );
+      audioLog('playback.batch.merged', {
+        batchId,
+        chunkCount: chunksToPlay.length,
+        totalSize,
+      });
 
       // Merge chunks
       const mergedBuffer = new Uint8Array(totalSize);
@@ -180,6 +328,11 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
         }
         const base64 = btoa(binary);
         const dataUri = `data:audio/wav;base64,${base64}`;
+        audioLog('playback.sound.create', {
+          batchId,
+          wavBytes: wavData.byteLength,
+        });
+        await forceSpeakerRoute(`before_sound_create_batch_${batchId}`);
 
         // Create and play sound
         const { sound } = await Audio.Sound.createAsync(
@@ -187,35 +340,97 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
           { shouldPlay: true }
         );
         soundRef.current = sound;
+        audioLog('playback.sound.create.success', { batchId });
+        await logNativeAudioRoute(`after_sound_create_batch_${batchId}`);
 
         await new Promise<void>((resolve) => {
-          sound.setOnPlaybackStatusUpdate((status) => {
-            if (status.isLoaded && status.didJustFinish) {
+          let settled = false;
+          const settle = () => {
+            if (!settled) {
+              settled = true;
               resolve();
+            }
+          };
+
+          const timeoutId = setTimeout(() => {
+            audioLog('playback.status.timeout', { batchId, timeoutMs: 15000 });
+            settle();
+          }, 15000);
+
+          let firstLoadedStatusLogged = false;
+          sound.setOnPlaybackStatusUpdate((status) => {
+            if (!status.isLoaded) {
+              if (status.error) {
+                audioLog('playback.status.error', {
+                  batchId,
+                  error: status.error,
+                });
+              }
+              return;
+            }
+
+            if (!firstLoadedStatusLogged) {
+              firstLoadedStatusLogged = true;
+              audioLog('playback.status.firstLoaded', {
+                batchId,
+                positionMillis: status.positionMillis,
+                durationMillis: status.durationMillis,
+                isPlaying: status.isPlaying,
+              });
+            }
+
+            if (status.didJustFinish) {
+              clearTimeout(timeoutId);
+              audioLog('playback.status.finished', {
+                batchId,
+                finalPositionMillis: status.positionMillis,
+              });
+              settle();
             }
           });
         });
 
         await sound.unloadAsync();
         soundRef.current = null;
+        audioLog('playback.sound.unload.success', { batchId });
       } catch (error) {
-        console.error('Failed to play audio:', error);
+        audioError('playback.sound.failed', error);
       }
     }
 
     isProcessingRef.current = false;
     setIsPlaying(false);
+    audioLog('playback.process.done', { batchId });
   }, []);
 
   const playAudio = useCallback(
     async (audioData: ArrayBuffer, _mimeType?: string) => {
       audioQueueRef.current.push(audioData);
+      queueEnqueueCountRef.current += 1;
+      queueEnqueueByteCountRef.current += audioData.byteLength;
+
+      const now = Date.now();
+      if (now - queueLastEnqueueLogMsRef.current >= 500) {
+        audioLog('playback.enqueue.stats', {
+          chunks: queueEnqueueCountRef.current,
+          bytes: queueEnqueueByteCountRef.current,
+          queueDepth: audioQueueRef.current.length,
+        });
+        queueEnqueueCountRef.current = 0;
+        queueEnqueueByteCountRef.current = 0;
+        queueLastEnqueueLogMsRef.current = now;
+      }
+
       processQueue();
     },
     [processQueue]
   );
 
   const stopPlayback = useCallback(async () => {
+    audioLog('playback.stop.requested', {
+      queueDepth: audioQueueRef.current.length,
+      hasSound: Boolean(soundRef.current),
+    });
     audioQueueRef.current = [];
     if (soundRef.current) {
       await soundRef.current.stopAsync();
@@ -224,6 +439,7 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
     }
     setIsPlaying(false);
     isProcessingRef.current = false;
+    audioLog('playback.stop.success');
   }, []);
 
   return {

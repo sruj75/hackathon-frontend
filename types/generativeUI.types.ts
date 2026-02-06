@@ -5,16 +5,9 @@
  * on the frontend via tool calls.
  */
 
-// Component type union (strict allowlist of 9 components)
+// Component type union (2 components)
 export type GenerativeUIType =
   | "day_view"
-  | "task_card"
-  | "time_slots"
-  | "schedule_picker"
-  | "goal_progress"
-  | "day_summary"
-  | "confirmation"
-  | "current_focus"
   | "stop_reflect_act";
 
 // Base event structure
@@ -29,13 +22,6 @@ export interface GenerativeUIEvent {
 // Union of all component props
 export type GenerativeUIProps =
   | DayViewProps
-  | TaskCardProps
-  | TimeSlotsProps
-  | SchedulePickerProps
-  | GoalProgressProps
-  | DaySummaryProps
-  | ConfirmationProps
-  | CurrentFocusProps
   | StopReflectActProps;
 
 // ============================================
@@ -59,69 +45,20 @@ export interface Task {
   is_goal_linked?: boolean;
 }
 
-export interface TimeSlot {
-  start: string;
-  end: string;
-  duration_minutes: number;
-}
-
 // ============================================
 // Component Props
 // ============================================
 
-// 1. DayView - Unified timeline
+// 1. DayView - Unified timeline showing events and tasks
 export interface DayViewProps {
   events: CalendarEvent[];
   tasks: Task[];
 }
 
-// 2. TaskCard - Single task with actions
-export interface TaskCardProps {
-  task: Task;
-}
-
-// 3. TimeSlots - Available slots display
-export interface TimeSlotsProps {
-  slots: TimeSlot[];
-}
-
-// 4. SchedulePicker - Time selection for a task
-export interface SchedulePickerProps {
-  task: Task;
-  slots: TimeSlot[];
-}
-
-// 5. GoalProgress - Visual progress toward goals
-export interface GoalProgressProps {
-  percentage: number;
-  summary: string;
-  completed: Task[];
-  pending: Task[];
-}
-
-// 6. DaySummary - End-of-day recap
-export interface DaySummaryProps {
-  completed: Task[];
-  pending: Task[];
-  events_count: number;
-}
-
-// 7. Confirmation - Action confirmation
-export interface ConfirmationProps {
-  action: string;
-  details: string;
-}
-
-// 8. CurrentFocus - "Now" card
-export interface CurrentFocusProps {
-  event?: CalendarEvent;
-  next_event?: CalendarEvent;
-}
-
-// 9. StopReflectAct - Emotional regulation wizard
+// 2. StopReflectAct - Emotional regulation wizard
 export interface StopReflectActProps {
   phase: 'stop' | 'reflect' | 'act';
   title: string;
-  prompt: string;
+  prompt?: string; // Optional - phase-specific content is now hardcoded in component
   action_items?: string[];
 }

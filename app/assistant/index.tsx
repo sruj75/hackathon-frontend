@@ -23,13 +23,7 @@ import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
 
 // Generative UI Components
 import { DayView } from '../../components/generative/DayView';
-import { TodoList } from '../../components/generative/TodoList';
-import { CalendarView } from '../../components/generative/CalendarView';
 import { StopReflectAct } from '../../components/generative/StopReflectAct';
-
-// Generate unique IDs for this session
-const userId = `user-${Date.now()}`;
-const sessionId = `session-${Date.now()}`;
 
 interface Transcription {
   participant: string;
@@ -44,6 +38,14 @@ export default function AssistantScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const scenario = (params.scenario as DemoScenario) || 'morning_braindump';
+
+  // Generate unique IDs for each session (not at module level)
+  const [userId] = useState(
+    () => `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  );
+  const [sessionId] = useState(
+    () => `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  );
 
   // WebSocket connection
   const {
@@ -166,8 +168,8 @@ export default function AssistantScreen() {
         addTranscription('Agent', event.serverContent.outputTranscription.text);
       }
 
-      // Handle text responses (Chat Mode) - with streaming support
-      if (event.content?.parts) {
+      // Handle text responses (Chat Mode) - ONLY when chat is open
+      if (event.content?.parts && viewMode === 'chat') {
         for (const part of event.content.parts) {
           if (part.text) {
             const textContent = part.text;
@@ -216,7 +218,7 @@ export default function AssistantScreen() {
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onEvent, addTranscription]);
+  }, [onEvent, addTranscription, viewMode]);
 
   // Control callbacks
   const onMicClick = useCallback(async () => {
@@ -273,17 +275,6 @@ export default function AssistantScreen() {
             key={component.id}
             events={(props.events as []) || []}
             tasks={(props.tasks as []) || []}
-          />
-        );
-      case 'todo_list':
-        return (
-          <TodoList key={component.id} tasks={(props.tasks as []) || []} />
-        );
-      case 'calendar_view':
-        return (
-          <CalendarView
-            key={component.id}
-            events={(props.events as []) || []}
           />
         );
       case 'stop_reflect_act':
