@@ -23,8 +23,6 @@ import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
 
 // Generative UI Components
 import { DayView } from '../../components/generative/DayView';
-import { TodoList } from '../../components/generative/TodoList';
-import { CalendarView } from '../../components/generative/CalendarView';
 
 // Hardcoded userId for v0 (matches root layout)
 const USER_ID = 'user_default';
@@ -293,46 +291,40 @@ export default function AssistantScreen() {
       'id:',
       component.id
     );
-    switch (component.type) {
-      case 'day_view':
-        return (
-          <DayView
-            key={component.id}
-            events={(props.events as []) || []}
-            tasks={(props.tasks as []) || []}
-          />
-        );
-      case 'todo_list':
-        return (
-          <TodoList key={component.id} tasks={(props.tasks as []) || []} />
-        );
-      case 'calendar_view':
-        return (
-          <CalendarView
-            key={component.id}
-            events={(props.events as []) || []}
-          />
-        );
-      default:
-        // Show error for unknown component types (helps debugging)
-        console.warn(`Unknown UI component type: ${component.type}`);
-        return (
-          <View
-            key={component.id}
-            style={{
-              padding: 16,
-              backgroundColor: '#fee2e2',
-              borderRadius: 8,
-              margin: 8,
-            }}
-          >
-            <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>
-              Unknown Component
-            </Text>
-            <Text style={{ color: '#dc2626' }}>Type: {component.type}</Text>
-          </View>
-        );
+    
+    if (component.type === 'day_view') {
+      return (
+        <DayView
+          key={component.id}
+          events={(props.events as []) || []}
+          tasks={(props.tasks as []) || []}
+          display_mode={(props.display_mode as any) || 'planning'} // Required - fallback for safety
+          current_block={props.current_block as any}
+          next_checkin={props.next_checkin as any}
+          focus_mode={props.focus_mode as any}
+          urgency_signals={props.urgency_signals as any}
+        />
+      );
     }
+    
+    // Show error for unknown component types (helps debugging)
+    console.warn(`Unknown UI component type: ${component.type}`);
+    return (
+      <View
+        key={component.id}
+        style={{
+          padding: 16,
+          backgroundColor: '#fee2e2',
+          borderRadius: 8,
+          margin: 8,
+        }}
+      >
+        <Text style={{ color: '#dc2626', fontWeight: 'bold' }}>
+          Unknown Component
+        </Text>
+        <Text style={{ color: '#dc2626' }}>Type: {component.type}</Text>
+      </View>
+    );
   };
 
   const isCollapsed = viewMode !== 'voice' || isPendingUIRender;

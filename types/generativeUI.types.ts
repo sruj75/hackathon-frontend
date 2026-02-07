@@ -7,14 +7,14 @@
 
 // Component type union (strict allowlist of 8 components)
 export type GenerativeUIType =
-  | "day_view"
-  | "task_card"
-  | "time_slots"
-  | "schedule_picker"
-  | "goal_progress"
-  | "day_summary"
-  | "confirmation"
-  | "current_focus";
+  | 'day_view'
+  | 'task_card'
+  | 'time_slots'
+  | 'schedule_picker'
+  | 'goal_progress'
+  | 'day_summary'
+  | 'confirmation'
+  | 'current_focus';
 
 // Base event structure
 export interface GenerativeUIEvent {
@@ -28,7 +28,6 @@ export interface GenerativeUIEvent {
 // Union of all component props
 export type GenerativeUIProps =
   | DayViewProps
-  | TaskCardProps
   | TimeSlotsProps
   | SchedulePickerProps
   | GoalProgressProps
@@ -53,7 +52,7 @@ export interface Task {
   title: string;
   notes?: string;
   due?: string;
-  status: "pending" | "completed";
+  status: 'pending' | 'completed';
   is_goal_linked?: boolean;
 }
 
@@ -67,29 +66,53 @@ export interface TimeSlot {
 // Component Props
 // ============================================
 
-// 1. DayView - Unified timeline
+// Display modes - agent must choose based on context
+export type DisplayMode = 'now_focus' | 'planning' | 'transition' | 'recap';
+
+// 1. DayView - Enhanced unified executive control panel with smart real estate management
 export interface DayViewProps {
+  // Core data (always present)
   events: CalendarEvent[];
   tasks: Task[];
+
+  // Display mode (REQUIRED - agent decides based on context)
+  display_mode: DisplayMode;
+
+  // Contextual intelligence (optional - progressive enhancement)
+  current_block?: {
+    event: CalendarEvent;
+    time_left_minutes: number;
+    progress_percent: number;
+  };
+
+  next_checkin?: {
+    time: string;
+    reason: string;
+  };
+
+  focus_mode?: {
+    relevant_tasks: Task[]; // Only 3-5 for current block
+    why_these: string; // "These match your current deep work block"
+  };
+
+  urgency_signals?: {
+    overdue_count: number;
+    at_risk_events: string[];
+  };
 }
 
-// 2. TaskCard - Single task with actions
-export interface TaskCardProps {
-  task: Task;
-}
-
-// 3. TimeSlots - Available slots display
+// 2. TimeSlots - Available slots display
 export interface TimeSlotsProps {
   slots: TimeSlot[];
 }
 
-// 4. SchedulePicker - Time selection for a task
+// 3. SchedulePicker - Time selection for a task
 export interface SchedulePickerProps {
   task: Task;
   slots: TimeSlot[];
 }
 
-// 5. GoalProgress - Visual progress toward goals
+// 4. GoalProgress - Visual progress toward goals
 export interface GoalProgressProps {
   percentage: number;
   summary: string;
@@ -97,20 +120,20 @@ export interface GoalProgressProps {
   pending: Task[];
 }
 
-// 6. DaySummary - End-of-day recap
+// 5. DaySummary - End-of-day recap
 export interface DaySummaryProps {
   completed: Task[];
   pending: Task[];
   events_count: number;
 }
 
-// 7. Confirmation - Action confirmation
+// 6. Confirmation - Action confirmation
 export interface ConfirmationProps {
   action: string;
   details: string;
 }
 
-// 8. CurrentFocus - "Now" card
+// 7. CurrentFocus - "Now" card
 export interface CurrentFocusProps {
   event?: CalendarEvent;
   next_event?: CalendarEvent;

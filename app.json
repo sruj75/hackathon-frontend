@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "Intentive",
-    "slug": "hackathon-intentive",
+    "slug": "intentive",
+    "owner": "srujxx",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -12,7 +13,7 @@
       "supportsTablet": true,
       "bitcode": false,
       "googleServicesFile": "./GoogleService-Info.plist",
-      "bundleIdentifier": "life.intentive.expo",
+      "bundleIdentifier": "life.intentive.ios",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app uses the microphone so you can talk to the voice assistant.",
         "NSCameraUsageDescription": "Camera access is used for optional video features.",
@@ -29,7 +30,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "life.intentive.expo",
+      "package": "life.intentive.android",
       "permissions": [
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.CAMERA",
@@ -75,7 +76,7 @@
         "origin": false
       },
       "eas": {
-        "projectId": "c4e705ec-1671-4e31-ba01-43d1bc1234c7"
+        "projectId": "37a66266-6230-4ba4-82d3-b4af85abe490"
       }
     }
   }

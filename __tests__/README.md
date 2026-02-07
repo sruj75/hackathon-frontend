@@ -1,77 +1,34 @@
 # Frontend Tests
 
-Unit tests for the Intentive frontend (React Native / Expo).
+Last validated: **February 7, 2026**  
+Status: **8 suites, 42 tests passing**
 
-## Running Tests
-
-Run all tests:
-
-```bash
-npm test
-```
-
-Run tests in watch mode:
+## Run
 
 ```bash
-npm test -- --watch
+cd frontend
+npm run ci:test -- --watchAll=false
 ```
 
-Run specific test file:
+## Integration Only
 
 ```bash
-npm test -- useNotifications.test.ts
+cd frontend
+npm run ci:test -- --watchAll=false __tests__/integration.test.ts __tests__/generative/integration.test.tsx
 ```
 
-Run with coverage:
+## Active Test Files
 
-```bash
-npm test -- --coverage
-```
+- `__tests__/useNotifications.test.ts` - push permission + token registration
+- `__tests__/deepLinking.test.ts` - notification tap routing/session params
+- `__tests__/integration.test.ts` - frontend notification flow integration
+- `__tests__/phase6Regression.test.ts` - phase 6 WebSocket init + generative UI routing
+- `__tests__/generative/DayView.test.tsx` - enhanced day view with contextual intelligence
+- `__tests__/generative/integration.test.tsx` - generative_ui event-to-render flow
 
-## Test Structure
+## Scope Rule
 
-### useNotifications.test.ts
-
-Tests for push notification hook:
-
-- ✅ Permission request flow
-- ✅ Token POST to backend
-- ✅ Graceful failure handling (denied permissions, network errors)
-- ✅ Simulator detection
-- ✅ Backend URL validation
-
-## Writing New Tests
-
-Use React Native Testing Library patterns:
-
-```typescript
-import { renderHook, waitFor } from '@testing-library/react-native';
-
-test('should do something', async () => {
-  const { result } = renderHook(() => useMyHook());
-  
-  await waitFor(() => {
-    expect(result.current.isReady).toBe(true);
-  });
-  
-  expect(result.current.value).toBe('expected');
-});
-```
-
-## Mocking
-
-Mock Expo modules in your test:
-
-```typescript
-jest.mock('expo-notifications');
-jest.mock('expo-device');
-```
-
-Mock fetch globally:
-
-```typescript
-global.fetch = jest.fn().mockResolvedValue({
-  ok: true,
-  json: async () => ({ data: 'result' })
-});
-```
+Keep tests focused on current behavior only:
+- one happy path
+- one failure/edge path
+- one regression guard per feature

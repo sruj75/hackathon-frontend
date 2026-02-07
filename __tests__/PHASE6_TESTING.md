@@ -8,11 +8,9 @@ This document provides guidance for end-to-end testing of the Phase 6 implementa
 
 ## Automated Tests
 
-✅ **All 49 automated tests passing:**
-- DayView component tests (15 tests)
-- TodoList component tests (16 tests)
-- CalendarView component tests (16 tests)
-- Integration tests (8 tests)
+✅ **All automated tests passing:**
+- Enhanced DayView component tests (multiple scenarios including contextual props)
+- Integration tests (generative_ui event flow)
 
 Run tests with:
 ```bash
@@ -106,19 +104,19 @@ npm test -- --testPathPattern=generative --watchAll=false
 - ✅ Event descriptions displayed (if present)
 - ✅ Time formatting correct (AM/PM)
 
-### Test 6: Multiple UI Updates
+### Test 5: Multiple UI Updates
 
 **Steps:**
-1. Ask for day view: "Show my day"
-2. Then ask for calendar: "Show calendar"
-3. Then ask for tasks: "Show tasks"
+1. Ask for schedule: "Show my day"
+2. Agent responds and shows day_view
+3. Ask again: "What's next?"
 
 **Expected Results:**
 - ✅ Each new UI component replaces previous one
 - ✅ Smooth transitions between views
 - ✅ No memory leaks or rendering issues
 
-### Test 7: Session Persistence Across Backend Restart
+### Test 6: Session Persistence Across Backend Restart
 
 **Steps:**
 1. Start conversation with agent

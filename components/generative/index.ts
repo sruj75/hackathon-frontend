@@ -1,3 +1,2 @@
+// Enhanced unified executive control panel
 export * from './DayView';
-export * from './TodoList';
-export * from './CalendarView';

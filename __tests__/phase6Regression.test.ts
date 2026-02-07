@@ -1,0 +1,210 @@
+import { act, renderHook, waitFor } from '@testing-library/react-native';
+
+import { useWebSocketAgent } from '@/hooks/useWebSocketAgent';
+
+type MockWs = {
+  send: jest.Mock;
+  close: jest.Mock;
+  readyState: number;
+  onopen: ((event: Event) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onmessage: ((event: MessageEvent) => void) | null;
+};
+
+describe('Phase 6 Regression - WebSocket + Generative UI', () => {
+  let mockWs: MockWs;
+  const originalAtob = global.atob;
+
+  beforeAll(() => {
+    if (!global.atob) {
+      global.atob = (input: string) =>
+        Buffer.from(input, 'base64').toString('binary');
+    }
+  });
+
+  afterAll(() => {
+    global.atob = originalAtob;
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.EXPO_PUBLIC_BACKEND_URL = 'http://localhost:8080';
+
+    mockWs = {
+      send: jest.fn(),
+      close: jest.fn(),
+      readyState: 0,
+      onopen: null,
+      onclose: null,
+      onerror: null,
+      onmessage: null,
+    };
+
+    global.WebSocket = jest.fn(() => mockWs as unknown as WebSocket) as any;
+    (global.WebSocket as any).OPEN = 1;
+    (global.WebSocket as any).CONNECTING = 0;
+    (global.WebSocket as any).CLOSED = 3;
+  });
+
+  it('sends init handshake with resume session + trigger type', async () => {
+    const { result } = renderHook(() =>
+      useWebSocketAgent('user_test', 'session_test')
+    );
+
+    act(() => {
+      result.current.connect({
+        resume_session_id: 'session_user_test_2026-02-06',
+        trigger_type: 'checkin',
+      });
+    });
+
+    expect(global.WebSocket).toHaveBeenCalledWith(
+      'ws://localhost:8080/ws/user_test/session_test'
+    );
+
+    act(() => {
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.isConnected).toBe(true);
+    });
+
+    expect(mockWs.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        type: 'init',
+        resume_session_id: 'session_user_test_2026-02-06',
+        trigger_type: 'checkin',
+      })
+    );
+  });
+
+  it('does not send init handshake for fresh sessions', async () => {
+    const { result } = renderHook(() =>
+      useWebSocketAgent('user_test', 'session_test')
+    );
+
+    act(() => {
+      result.current.connect();
+    });
+
+    act(() => {
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.isConnected).toBe(true);
+    });
+
+    expect(mockWs.send).not.toHaveBeenCalled();
+  });
+
+  it('routes generative_ui events to onUIComponent callback only', () => {
+    const onUIComponent = jest.fn();
+    const onEvent = jest.fn();
+
+    const { result } = renderHook(() =>
+      useWebSocketAgent('user_test', 'session_test')
+    );
+
+    act(() => {
+      result.current.onUIComponent(onUIComponent);
+      result.current.onEvent(onEvent);
+      result.current.connect();
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+    });
+
+    act(() => {
+      mockWs.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'generative_ui',
+            component: 'day_view',
+            props: {
+              events: [{ id: 'e1', title: 'Meeting' }],
+              tasks: [{ id: 't1', title: 'Task', status: 'pending' }],
+            },
+          }),
+        })
+      );
+    });
+
+    expect(onUIComponent).toHaveBeenCalledTimes(1);
+    expect(onUIComponent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'day_view',
+        props: {
+          events: [{ id: 'e1', title: 'Meeting' }],
+          tasks: [{ id: 't1', title: 'Task', status: 'pending' }],
+        },
+      })
+    );
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it('still processes regular ADK events and audio payloads', () => {
+    const onAudio = jest.fn();
+    const onEvent = jest.fn();
+
+    const { result } = renderHook(() =>
+      useWebSocketAgent('user_test', 'session_test')
+    );
+
+    act(() => {
+      result.current.onAudio(onAudio);
+      result.current.onEvent(onEvent);
+      result.current.connect();
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+    });
+
+    act(() => {
+      mockWs.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            content: {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: 'audio/pcm;rate=16000',
+                    data: 'AQID',
+                  },
+                },
+              ],
+            },
+            partial: false,
+          }),
+        })
+      );
+    });
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onAudio).toHaveBeenCalledTimes(1);
+    const audioBuffer = onAudio.mock.calls[0][0] as ArrayBuffer;
+    expect(audioBuffer.byteLength).toBe(3);
+  });
+
+  it('surfaces invalid backend URL format as a connection error', async () => {
+    process.env.EXPO_PUBLIC_BACKEND_URL = 'localhost:8080';
+
+    const { result } = renderHook(() =>
+      useWebSocketAgent('user_test', 'session_test')
+    );
+
+    act(() => {
+      result.current.connect();
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.error).toContain(
+        'EXPO_PUBLIC_BACKEND_URL must start with http:// or https://'
+      );
+    });
+
+    expect(global.WebSocket).not.toHaveBeenCalled();
+  });
+});

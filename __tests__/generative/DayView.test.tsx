@@ -1,225 +1,289 @@
-/**
- * Tests for DayView component.
- *
- * Tests:
- * - Renders empty state when no events/tasks
- * - Displays scheduled events with correct time formatting
- * - Shows pending tasks section
- * - Shows completed tasks section
- * - Handles mixed events and tasks
- * - Scrolls when content exceeds container
- */
 import React from 'react';
 import { render } from '@testing-library/react-native';
+
 import { DayView } from '@/components/generative/DayView';
 import { CalendarEvent, Task } from '@/types/generativeUI.types';
 
-// Mock TaskCard since it's imported by DayView
-jest.mock('@/components/generative/TaskCard', () => ({
-  TaskCard: ({ task }: { task: Task }) => {
-    const { Text, View } = require('react-native');
-    return (
-      <View testID={`task-card-${task.id}`}>
-        <Text>{task.title}</Text>
-        <Text>{task.status}</Text>
-      </View>
-    );
+// Mock expo-linear-gradient
+jest.mock('expo-linear-gradient', () => ({
+  LinearGradient: ({ children, ...props }: any) => {
+    const { View } = require('react-native');
+    return <View {...props}>{children}</View>;
   },
 }));
 
-describe('DayView', () => {
-  const mockEvents: CalendarEvent[] = [
+describe('DayView - Apple-Minimal Generative UI', () => {
+  const events: CalendarEvent[] = [
     {
-      id: 'event1',
+      id: 'event-1',
       title: 'Morning Planning',
-      start_time: '2026-02-05T09:00:00Z',
-      end_time: '2026-02-05T09:30:00Z',
+      start_time: '2026-12-07T14:30:00Z', // Future date
+      end_time: '2026-12-07T15:00:00Z',
     },
     {
-      id: 'event2',
+      id: 'event-2',
       title: 'Team Meeting',
-      start_time: '2026-02-05T14:00:00Z',
-      end_time: '2026-02-05T15:00:00Z',
-      description: 'Weekly sync',
+      start_time: '2026-12-07T19:30:00Z', // Future date, later in day
+      end_time: '2026-12-07T20:30:00Z',
     },
   ];
 
-  const mockTasks: Task[] = [
-    {
-      id: 'task1',
-      title: 'Write report',
-      status: 'pending',
-    },
-    {
-      id: 'task2',
-      title: 'Review code',
-      status: 'pending',
-      notes: 'PR #123',
-    },
-    {
-      id: 'task3',
-      title: 'Email client',
-      status: 'completed',
-    },
+  const tasks: Task[] = [
+    { id: 'task-1', title: 'Write report', status: 'pending' },
+    { id: 'task-2', title: 'Review PR', status: 'pending' },
+    { id: 'task-3', title: 'Update docs', status: 'completed' },
   ];
 
-  it('renders empty state when no events or tasks', () => {
-    const { getByText } = render(<DayView events={[]} tasks={[]} />);
+  describe('Planning Mode', () => {
+    it('renders planning view with events and tasks', () => {
+      const { getByText } = render(
+        <DayView
+          events={events}
+          tasks={tasks}
+          display_mode="planning"
+        />
+      );
 
-    expect(getByText("Today's Plan")).toBeTruthy();
-    expect(getByText('No events or tasks for today')).toBeTruthy();
+      expect(getByText('Today')).toBeTruthy();
+      expect(getByText('SCHEDULED')).toBeTruthy();
+      expect(getByText('Morning Planning')).toBeTruthy();
+      expect(getByText('TO DO')).toBeTruthy();
+      expect(getByText('Write report')).toBeTruthy();
+    });
+
+    it('shows truncation hint when more items exist', () => {
+      const manyTasks = Array.from({ length: 10 }, (_, i) => ({
+        id: `task-${i}`,
+        title: `Task ${i}`,
+        status: 'pending' as const,
+      }));
+
+      const { getByText } = render(
+        <DayView
+          events={events}
+          tasks={manyTasks}
+          display_mode="planning"
+        />
+      );
+
+      // Planning mode shows 5 tasks, so should see +5 more
+      expect(getByText('+5 more')).toBeTruthy();
+    });
+
+    it('shows urgency signals in planning mode', () => {
+      const { getByText } = render(
+        <DayView
+          events={events}
+          tasks={tasks}
+          display_mode="planning"
+          urgency_signals={{
+            overdue_count: 3,
+            at_risk_events: [],
+          }}
+        />
+      );
+
+      expect(getByText('3')).toBeTruthy(); // Urgency badge
+    });
   });
 
-  it('displays scheduled events with correct time formatting', () => {
-    const { getByText } = render(<DayView events={mockEvents} tasks={[]} />);
+  describe('Now Focus Mode', () => {
+    it('renders now focus view with current block', () => {
+      const { getByText, getAllByText } = render(
+        <DayView
+          events={events}
+          tasks={tasks}
+          display_mode="now_focus"
+          current_block={{
+            event: events[0],
+            time_left_minutes: 15,
+            progress_percent: 50,
+          }}
+        />
+      );
 
-    expect(getByText("Today's Plan")).toBeTruthy();
-    expect(getByText('📅 Scheduled')).toBeTruthy();
-    expect(getByText('Morning Planning')).toBeTruthy();
-    expect(getByText('Team Meeting')).toBeTruthy();
+      expect(getByText('NOW')).toBeTruthy();
+      expect(getAllByText('Morning Planning').length).toBeGreaterThan(0);
+      expect(getByText('15 min left')).toBeTruthy();
+      expect(getByText('NEXT')).toBeTruthy();
+      expect(getByText('Team Meeting')).toBeTruthy();
+    });
 
-    // Check that time formatting works (exact format depends on locale)
-    // We just verify events are displayed
+    it('shows focused tasks in now focus mode', () => {
+      const { getByText } = render(
+        <DayView
+          events={events}
+          tasks={tasks}
+          display_mode="now_focus"
+          current_block={{
+            event: events[0],
+            time_left_minutes: 15,
+            progress_percent: 50,
+          }}
+        />
+      );
+
+      expect(getByText('FOCUS ON')).toBeTruthy();
+      // Now focus mode shows max 3 tasks
+      expect(getByText('Write report')).toBeTruthy();
+      expect(getByText('Review PR')).toBeTruthy();
+    });
   });
 
-  it('shows pending tasks section with count', () => {
-    const { getByText, getByTestId } = render(
-      <DayView events={[]} tasks={mockTasks} />
-    );
+  describe('Transition Mode', () => {
+    it('renders transition view with completed and next event', () => {
+      const pastEvent: CalendarEvent = {
+        id: 'event-past',
+        title: 'Past Meeting',
+        start_time: '2026-02-07T08:00:00Z', // Past (before today)
+        end_time: '2026-02-07T09:00:00Z',
+      };
 
-    expect(getByText('📋 To Do (2)')).toBeTruthy();
-    expect(getByTestId('task-card-task1')).toBeTruthy();
-    expect(getByTestId('task-card-task2')).toBeTruthy();
+      const futureEvents: CalendarEvent[] = [
+        {
+          id: 'event-future-1',
+          title: 'Morning Planning',
+          start_time: '2026-12-08T14:30:00Z', // Future
+          end_time: '2026-12-08T15:00:00Z',
+        },
+        {
+          id: 'event-future-2',
+          title: 'Team Meeting',
+          start_time: '2026-12-08T19:30:00Z', // Future, later
+          end_time: '2026-12-08T20:30:00Z',
+        },
+      ];
+
+      const { getByText } = render(
+        <DayView
+          events={[pastEvent, ...futureEvents]}
+          tasks={[]}
+          display_mode="transition"
+        />
+      );
+
+      expect(getByText('JUST FINISHED')).toBeTruthy();
+      expect(getByText('Past Meeting')).toBeTruthy();
+      expect(getByText('UP NEXT')).toBeTruthy();
+      expect(getByText('Morning Planning')).toBeTruthy();
+    });
+
+    it('shows next check-in in transition mode', () => {
+      const { getByText } = render(
+        <DayView
+          events={events}
+          tasks={[]}
+          display_mode="transition"
+          next_checkin={{
+            time: '2026-02-07T10:00:00Z',
+            reason: 'End of work block',
+          }}
+        />
+      );
+
+      expect(getByText(/Next check-in:/)).toBeTruthy();
+      expect(getByText(/End of work block/)).toBeTruthy();
+    });
   });
 
-  it('shows completed tasks section with count', () => {
-    const { getByText, getByTestId } = render(
-      <DayView events={[]} tasks={mockTasks} />
-    );
+  describe('Recap Mode', () => {
+    it('renders recap view with completed tasks', () => {
+      const { getByText } = render(
+        <DayView
+          events={events}
+          tasks={tasks}
+          display_mode="recap"
+        />
+      );
 
-    expect(getByText('✅ Done (1)')).toBeTruthy();
-    expect(getByTestId('task-card-task3')).toBeTruthy();
+      expect(getByText('Day Complete')).toBeTruthy();
+      expect(getByText('1 tasks done • 2 events')).toBeTruthy();
+      expect(getByText('ACCOMPLISHED')).toBeTruthy();
+      expect(getByText('Update docs')).toBeTruthy();
+    });
+
+    it('shows empty state when no tasks completed', () => {
+      const { getByText } = render(
+        <DayView
+          events={events}
+          tasks={tasks.filter((t) => t.status === 'pending')}
+          display_mode="recap"
+        />
+      );
+
+      expect(getByText('No tasks completed today')).toBeTruthy();
+    });
   });
 
-  it('handles mixed events and tasks', () => {
-    const { getByText, getByTestId } = render(
-      <DayView events={mockEvents} tasks={mockTasks} />
-    );
+  describe('Real Estate Management', () => {
+    it('limits items per mode to fit screen', () => {
+      const manyEvents = Array.from({ length: 10 }, (_, i) => ({
+        id: `event-${i}`,
+        title: `Event ${i}`,
+        start_time: `2027-02-07T${10 + i}:00:00Z`, // Future year
+        end_time: `2027-02-07T${11 + i}:00:00Z`,
+      }));
 
-    // Should have all sections
-    expect(getByText('📅 Scheduled')).toBeTruthy();
-    expect(getByText('📋 To Do (2)')).toBeTruthy();
-    expect(getByText('✅ Done (1)')).toBeTruthy();
+      const { queryByText } = render(
+        <DayView
+          events={manyEvents}
+          tasks={[]}
+          display_mode="planning"
+        />
+      );
 
-    // Events
-    expect(getByText('Morning Planning')).toBeTruthy();
-    expect(getByText('Team Meeting')).toBeTruthy();
+      // Planning mode shows max 5 events
+      expect(queryByText('Event 0')).toBeTruthy();
+      expect(queryByText('Event 4')).toBeTruthy();
+      // Event 5 onwards should show as "+X more"
+      expect(queryByText('+5 more')).toBeTruthy();
+    });
 
-    // Tasks
-    expect(getByTestId('task-card-task1')).toBeTruthy();
-    expect(getByTestId('task-card-task2')).toBeTruthy();
-    expect(getByTestId('task-card-task3')).toBeTruthy();
+    it('adapts limits based on display mode', () => {
+      const { queryByText: queryPlanning } = render(
+        <DayView
+          events={events}
+          tasks={tasks}
+          display_mode="planning"
+        />
+      );
+
+      // Planning shows multiple tasks
+      expect(queryPlanning('Write report')).toBeTruthy();
+      expect(queryPlanning('Review PR')).toBeTruthy();
+
+      const { queryByText: queryTransition } = render(
+        <DayView
+          events={events}
+          tasks={tasks}
+          display_mode="transition"
+        />
+      );
+
+      // Transition shows no tasks section
+      expect(queryTransition('Write report')).toBeNull();
+    });
   });
 
-  it('only shows sections with content', () => {
-    const pendingOnly: Task[] = [
-      { id: 't1', title: 'Task 1', status: 'pending' },
-    ];
+  describe('Invalid Data Handling', () => {
+    it('handles invalid timestamps gracefully', () => {
+      const { getByText } = render(
+        <DayView
+          events={[
+            {
+              id: 'bad-time',
+              title: 'Broken event',
+              start_time: 'invalid',
+              end_time: 'invalid',
+            },
+          ]}
+          tasks={[]}
+          display_mode="planning"
+        />
+      );
 
-    const { getByText, queryByText } = render(
-      <DayView events={[]} tasks={pendingOnly} />
-    );
-
-    expect(getByText('📋 To Do (1)')).toBeTruthy();
-    expect(queryByText('✅ Done')).toBeNull();
-    expect(queryByText('📅 Scheduled')).toBeNull();
-  });
-
-  it('renders with ScrollView for long content', () => {
-    const manyEvents: CalendarEvent[] = Array.from({ length: 10 }, (_, i) => ({
-      id: `event${i}`,
-      title: `Event ${i}`,
-      start_time: '2026-02-05T09:00:00Z',
-      end_time: '2026-02-05T10:00:00Z',
-    }));
-
-    const { UNSAFE_getByType } = render(
-      <DayView events={manyEvents} tasks={[]} />
-    );
-
-    const { ScrollView } = require('react-native');
-    const scrollView = UNSAFE_getByType(ScrollView);
-    expect(scrollView).toBeTruthy();
-  });
-
-  it('handles tasks with all optional fields', () => {
-    const richTasks: Task[] = [
-      {
-        id: 'task-rich',
-        title: 'Complex Task',
-        notes: 'Detailed notes here',
-        due: '2026-02-05T17:00:00Z',
-        status: 'pending',
-        is_goal_linked: true,
-      },
-    ];
-
-    const { getByTestId } = render(<DayView events={[]} tasks={richTasks} />);
-
-    expect(getByTestId('task-card-task-rich')).toBeTruthy();
-  });
-
-  it('formats time correctly for different timezones', () => {
-    const eventWithTime: CalendarEvent[] = [
-      {
-        id: 'e1',
-        title: 'Event',
-        start_time: '2026-02-05T13:30:00Z',
-        end_time: '2026-02-05T14:30:00Z',
-      },
-    ];
-
-    const { getByText } = render(
-      <DayView events={eventWithTime} tasks={[]} />
-    );
-
-    // Just verify component renders without crashing
-    expect(getByText('Event')).toBeTruthy();
-  });
-
-  it('handles empty event title gracefully', () => {
-    const emptyTitleEvent: CalendarEvent[] = [
-      {
-        id: 'e1',
-        title: '',
-        start_time: '2026-02-05T09:00:00Z',
-        end_time: '2026-02-05T10:00:00Z',
-      },
-    ];
-
-    const { UNSAFE_getAllByType } = render(
-      <DayView events={emptyTitleEvent} tasks={[]} />
-    );
-
-    const { Text } = require('react-native');
-    const texts = UNSAFE_getAllByType(Text);
-    // Should render without crashing even with empty title
-    expect(texts.length).toBeGreaterThan(0);
-  });
-
-  it('handles missing task title gracefully', () => {
-    const taskWithoutTitle: Task[] = [
-      {
-        id: 't1',
-        title: '',
-        status: 'pending',
-      },
-    ];
-
-    const { getByTestId } = render(
-      <DayView events={[]} tasks={taskWithoutTitle} />
-    );
-
-    expect(getByTestId('task-card-t1')).toBeTruthy();
+      // Should render without crashing
+      expect(getByText('Today')).toBeTruthy();
+    });
   });
 });
