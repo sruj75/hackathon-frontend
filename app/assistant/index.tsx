@@ -137,10 +137,16 @@ export default function AssistantScreen() {
   // Set up audio playback callback - play audio received from server
   useEffect(() => {
     const unsubscribe = onAudio((audioData) => {
-      playAudio(audioData);
+      // Only play audio when in voice mode (or when explicitly enabled)
+      if (viewMode === 'voice') {
+        playAudio(audioData);
+      } else {
+        console.log('[AUDIO] Skipping playback in chat mode');
+        // Audio received but not played - transcription will show in chat
+      }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onAudio, playAudio]);
+  }, [onAudio, playAudio, viewMode]);
 
   // Handle UI components from backend
   useEffect(() => {
@@ -160,6 +166,14 @@ export default function AssistantScreen() {
   // Handle ADK events (transcriptions, responses)
   useEffect(() => {
     const unsubscribe = onEvent((event: ADKEvent) => {
+      // Handle interruptions - clear any streaming text when user interrupts
+      if (event.interrupted) {
+        console.log(
+          '[CHAT] Agent interrupted, clearing streaming transcription'
+        );
+        setStreamingTranscription(null);
+      }
+
       // Handle input transcription (user speech)
       if (event.serverContent?.inputTranscription?.text) {
         addTranscription(USER_ID, event.serverContent.inputTranscription.text);
@@ -204,8 +218,9 @@ export default function AssistantScreen() {
                 }
               });
             } else {
-              // Non-partial response - add directly
+              // Non-partial response - add directly AND clear streaming state
               addTranscription('Agent', textContent);
+              setStreamingTranscription(null); // Clear to prevent duplicates
             }
           }
         }
@@ -246,9 +261,13 @@ export default function AssistantScreen() {
         setViewMode('voice');
       }
     } else {
+      // Stop any playing audio when switching TO chat mode
+      if (isPlaying) {
+        stopPlayback();
+      }
       setViewMode('chat');
     }
-  }, [viewMode, uiComponents.length]);
+  }, [viewMode, uiComponents.length, isPlaying, stopPlayback]);
 
   const onExitClick = useCallback(() => {
     disconnect();
