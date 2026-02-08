@@ -49,7 +49,9 @@ export interface UseWebSocketAgentReturn {
   sendAudio: (audioData: ArrayBuffer) => void;
   sendText: (text: string) => void;
   onEvent: (callback: (event: ADKEvent) => void) => void;
-  onAudio: (callback: (audioData: ArrayBuffer) => void) => void;
+  onAudio: (
+    callback: (audioData: ArrayBuffer | string, mimeType?: string) => void
+  ) => void;
   onUIComponent: (callback: (component: GenerativeUIEvent) => void) => void;
 }
 
@@ -77,9 +79,9 @@ export function useWebSocketAgent(
   const connectOptionsRef = useRef<ConnectOptions | undefined>(undefined);
 
   const eventCallbackRef = useRef<((event: ADKEvent) => void) | null>(null);
-  const audioCallbackRef = useRef<((audioData: ArrayBuffer) => void) | null>(
-    null
-  );
+  const audioCallbackRef = useRef<
+    ((audioData: ArrayBuffer | string, mimeType?: string) => void) | null
+  >(null);
   const uiComponentCallbackRef = useRef<
     ((component: GenerativeUIEvent) => void) | null
   >(null);
@@ -130,7 +132,8 @@ export function useWebSocketAgent(
           let timezone = options?.timezone || 'UTC';
           if (!options?.timezone) {
             try {
-              timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+              timezone =
+                Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
             } catch (error) {
               console.warn(
                 '[WS-INIT] Failed to detect device timezone, using UTC',
@@ -218,19 +221,16 @@ export function useWebSocketAgent(
               if (adkEvent.content?.parts) {
                 for (const part of adkEvent.content.parts) {
                   if (part.inlineData?.mimeType?.includes('audio')) {
-                    // Decode base64 audio and send to callback
-                    let base64 = part.inlineData.data;
-                    // Fix URL-safe base64 and remove whitespace
-                    base64 = base64
+                    // Forward audio payload as base64 to avoid costly decode/re-encode
+                    // in JS, which can add jitter and playback artifacts.
+                    const normalizedBase64 = part.inlineData.data
                       .replace(/-/g, '+')
                       .replace(/_/g, '/')
                       .replace(/\s/g, '');
-                    const binaryString = atob(base64);
-                    const bytes = new Uint8Array(binaryString.length);
-                    for (let i = 0; i < binaryString.length; i++) {
-                      bytes[i] = binaryString.charCodeAt(i);
-                    }
-                    audioCallbackRef.current?.(bytes.buffer);
+                    audioCallbackRef.current?.(
+                      normalizedBase64,
+                      part.inlineData.mimeType
+                    );
                   }
                 }
               }
@@ -292,9 +292,14 @@ export function useWebSocketAgent(
     eventCallbackRef.current = callback;
   }, []);
 
-  const onAudio = useCallback((callback: (audioData: ArrayBuffer) => void) => {
-    audioCallbackRef.current = callback;
-  }, []);
+  const onAudio = useCallback(
+    (
+      callback: (audioData: ArrayBuffer | string, mimeType?: string) => void
+    ) => {
+      audioCallbackRef.current = callback;
+    },
+    []
+  );
 
   const onUIComponent = useCallback(
     (callback: (component: GenerativeUIEvent) => void) => {

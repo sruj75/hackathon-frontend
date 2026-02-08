@@ -77,7 +77,8 @@ export default function AssistantScreen() {
   // Audio recording and playback
   const { isRecording, startRecording, stopRecording, onAudioData } =
     useAudioRecording();
-  const { isPlaying, playAudio, stopPlayback } = useAudioPlayback();
+  const { isPlaying, playAudio, endPlayback, stopPlayback } =
+    useAudioPlayback();
 
   // UI State
   const [isMicEnabled, setIsMicEnabled] = useState(false);
@@ -169,10 +170,10 @@ export default function AssistantScreen() {
 
   // Set up audio playback callback - play audio received from server
   useEffect(() => {
-    const unsubscribe = onAudio((audioData) => {
+    const unsubscribe = onAudio((audioData, mimeType) => {
       // Only play audio when in voice mode (or when explicitly enabled)
       if (viewMode === 'voice') {
-        playAudio(audioData);
+        playAudio(audioData, mimeType);
       } else {
         console.log('[AUDIO] Skipping playback in chat mode');
         // Audio received but not played - transcription will show in chat
@@ -265,6 +266,8 @@ export default function AssistantScreen() {
       // Handle turn completion - finalize streaming transcription
       if (event.turnComplete) {
         console.log('[CHAT] Turn complete, finalizing streaming transcription');
+        // Signals playback drain completion so isPlaying can reset for next user turn.
+        void endPlayback();
         setStreamingTranscription((prev) => {
           if (prev && prev.text) {
             // Move streaming text to final transcriptions
@@ -275,7 +278,7 @@ export default function AssistantScreen() {
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onEvent, addTranscription, transcriptionUserId]);
+  }, [onEvent, addTranscription, endPlayback, transcriptionUserId]);
 
   // Control callbacks
   const onMicClick = useCallback(async () => {

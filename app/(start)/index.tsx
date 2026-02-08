@@ -3,7 +3,6 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   StyleSheet,
   View,
-  Image,
   Text,
   TouchableOpacity,
   ActivityIndicator,
@@ -166,15 +165,11 @@ export default function StartScreen() {
     }, 500);
   };
 
-  const connectText = isConnecting ? 'Connecting' : 'Start Voice Assistant';
+  const connectText = isConnecting ? 'Connecting' : 'Start';
 
   return (
     <View style={styles.container}>
-      <Image
-        style={styles.logo}
-        source={require('../../assets/images/start-logo.png')}
-      />
-      <Text style={styles.text}>Chat live with your voice AI agent</Text>
+      <Text style={styles.text}>Welcome to Intentive</Text>
 
       <TouchableOpacity
         onPress={handleConnect}

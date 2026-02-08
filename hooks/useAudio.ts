@@ -141,17 +141,23 @@ export function useAudioRecording(): UseAudioRecordingReturn {
 
 export interface UseAudioPlaybackReturn {
   isPlaying: boolean;
-  playAudio: (audioData: ArrayBuffer, mimeType?: string) => Promise<void>;
+  playAudio: (
+    audioData: ArrayBuffer | string,
+    mimeType?: string
+  ) => Promise<void>;
+  endPlayback: () => Promise<void>;
   stopPlayback: () => Promise<void>;
 }
 
 export function useAudioPlayback(): UseAudioPlaybackReturn {
   const playbackInitializedRef = useRef(false);
   const playbackInitPromiseRef = useRef<Promise<void> | null>(null);
+  const playbackSampleRateRef = useRef(24000);
 
   const {
     isPlaying,
     startPlayback: streamStartPlayback,
+    endPlayback: streamEndPlayback,
     stopPlayback: streamStopPlayback,
     playChunk: streamPlayChunk,
   } = useAudioStream({
@@ -160,65 +166,122 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
     },
   });
 
-  const initializePlayback = useCallback(async () => {
-    if (playbackInitializedRef.current) {
-      return;
-    }
-
-    if (playbackInitPromiseRef.current) {
-      await playbackInitPromiseRef.current;
-      return;
-    }
-
-    playbackInitPromiseRef.current = (async () => {
-      try {
-        await streamStartPlayback({
-          sampleRate: 24000, // Gemini sends 24kHz audio
-          channels: 1,
-        });
-
-        playbackInitializedRef.current = true;
-        console.log('[AUDIO] ✅ Playback initialized (24kHz, speaker routing)');
-      } catch (error) {
-        console.error('[AUDIO] Failed to initialize playback:', error);
-        throw error;
-      } finally {
-        playbackInitPromiseRef.current = null;
+  const initializePlayback = useCallback(
+    async (sampleRate: number) => {
+      if (playbackInitializedRef.current) {
+        return;
       }
-    })();
 
-    await playbackInitPromiseRef.current;
-  }, [streamStartPlayback]);
+      if (playbackInitPromiseRef.current) {
+        await playbackInitPromiseRef.current;
+        return;
+      }
+
+      playbackInitPromiseRef.current = (async () => {
+        try {
+          await streamStartPlayback(
+            {
+              sampleRate,
+              channels: 1,
+            },
+            () => {
+              playbackInitializedRef.current = false;
+              playbackSampleRateRef.current = 24000;
+            }
+          );
+
+          playbackInitializedRef.current = true;
+          playbackSampleRateRef.current = sampleRate;
+          console.log(
+            `[AUDIO] ✅ Playback initialized (${sampleRate}Hz, speaker routing)`
+          );
+        } catch (error) {
+          console.error('[AUDIO] Failed to initialize playback:', error);
+          throw error;
+        } finally {
+          playbackInitPromiseRef.current = null;
+        }
+      })();
+
+      await playbackInitPromiseRef.current;
+    },
+    [streamStartPlayback]
+  );
+
+  const parseSampleRateFromMime = useCallback((mimeType?: string) => {
+    if (!mimeType) {
+      return null;
+    }
+    const match = mimeType.match(/rate=(\d+)/i);
+    if (!match) {
+      return null;
+    }
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, []);
+
+  const arrayBufferToBase64 = useCallback((audioData: ArrayBuffer) => {
+    const bytes = new Uint8Array(audioData);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }, []);
 
   const playAudio = useCallback(
-    async (audioData: ArrayBuffer, _mimeType?: string) => {
+    async (audioData: ArrayBuffer | string, mimeType?: string) => {
       try {
-        // Initialize playback on first call
+        const detectedRate = parseSampleRateFromMime(mimeType);
+        const targetRate = detectedRate || playbackSampleRateRef.current || 24000;
+
+        // Re-init playback if stream sample rate changes between turns.
+        if (
+          playbackInitializedRef.current &&
+          playbackSampleRateRef.current !== targetRate
+        ) {
+          await streamStopPlayback();
+          playbackInitializedRef.current = false;
+        }
+
         if (!playbackInitializedRef.current) {
-          await initializePlayback();
+          await initializePlayback(targetRate);
         }
 
-        // Convert ArrayBuffer to base64
-        const bytes = new Uint8Array(audioData);
-        let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        const base64Data = btoa(binary);
+        const base64Data =
+          typeof audioData === 'string'
+            ? audioData
+            : arrayBufferToBase64(audioData);
 
-        // Queue and play the chunk
         await streamPlayChunk(base64Data);
       } catch (error) {
         console.error('[AUDIO] Failed to play audio:', error);
       }
     },
-    [initializePlayback, streamPlayChunk]
+    [
+      arrayBufferToBase64,
+      initializePlayback,
+      parseSampleRateFromMime,
+      streamPlayChunk,
+      streamStopPlayback,
+    ]
   );
+
+  const endPlayback = useCallback(async () => {
+    if (playbackInitializedRef.current) {
+      try {
+        await streamEndPlayback();
+      } catch (error) {
+        console.error('[AUDIO] Failed to end playback:', error);
+      }
+    }
+  }, [streamEndPlayback]);
 
   const stopPlayback = useCallback(async () => {
     try {
       await streamStopPlayback();
       playbackInitializedRef.current = false;
+      playbackSampleRateRef.current = 24000;
       console.log('[AUDIO] Playback stopped');
     } catch (error) {
       console.error('[AUDIO] Failed to stop playback:', error);
@@ -228,6 +291,7 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
   return {
     isPlaying,
     playAudio,
+    endPlayback,
     stopPlayback,
   };
 }
