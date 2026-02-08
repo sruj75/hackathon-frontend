@@ -106,8 +106,11 @@ export function useWebSocketAgent(
 
   const connect = useCallback(
     (options?: ConnectOptions) => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        console.log('WebSocket already connected');
+      if (
+        wsRef.current?.readyState === WebSocket.OPEN ||
+        wsRef.current?.readyState === WebSocket.CONNECTING
+      ) {
+        console.log('WebSocket already connected/connecting');
         return;
       }
 
@@ -255,7 +258,12 @@ export function useWebSocketAgent(
       wsRef.current.close();
       wsRef.current = null;
     }
-    setState({ isConnected: false, isConnecting: false, error: null });
+    setState((prev) => {
+      if (!prev.isConnected && !prev.isConnecting && prev.error === null) {
+        return prev;
+      }
+      return { isConnected: false, isConnecting: false, error: null };
+    });
   }, []);
 
   const sendAudio = useCallback((audioData: ArrayBuffer) => {

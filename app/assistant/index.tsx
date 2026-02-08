@@ -39,21 +39,28 @@ export default function AssistantScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
 
+  const resumeSessionId = Array.isArray(params.resume_session_id)
+    ? params.resume_session_id[0]
+    : params.resume_session_id;
+  const triggerType = Array.isArray(params.trigger_type)
+    ? params.trigger_type[0]
+    : params.trigger_type;
+
   // Get session ID from route params (deep link) or generate new one
-  const sessionId =
-    (params.resume_session_id as string) || `session-${Date.now()}`;
+  const generatedSessionIdRef = useRef(`session-${Date.now()}`);
+  const sessionId = resumeSessionId || generatedSessionIdRef.current;
 
   // Log deep link context if available
   useEffect(() => {
-    if (params.resume_session_id) {
+    if (resumeSessionId) {
       console.log(
         '[AssistantScreen] Resuming session from notification:',
-        params.resume_session_id,
+        resumeSessionId,
         'type:',
-        params.trigger_type
+        triggerType
       );
     }
-  }, [params.resume_session_id, params.trigger_type]);
+  }, [resumeSessionId, triggerType]);
 
   // WebSocket connection
   const {
@@ -91,10 +98,10 @@ export default function AssistantScreen() {
   // Connect on mount with session resumption params if available
   useEffect(() => {
     const connectOptions =
-      params.resume_session_id || params.trigger_type
+      resumeSessionId || triggerType
         ? {
-            resume_session_id: params.resume_session_id as string,
-            trigger_type: params.trigger_type as string,
+            resume_session_id: resumeSessionId as string,
+            trigger_type: triggerType as string,
           }
         : undefined;
 
@@ -102,7 +109,7 @@ export default function AssistantScreen() {
     return () => {
       disconnect();
     };
-  }, [connect, disconnect, params.resume_session_id, params.trigger_type]);
+  }, [connect, disconnect, resumeSessionId, triggerType]);
 
   // Auto-start recording when WebSocket connects for real-time streaming
   const hasAutoStartedRef = React.useRef(false);
@@ -291,7 +298,7 @@ export default function AssistantScreen() {
       'id:',
       component.id
     );
-    
+
     if (component.type === 'day_view') {
       return (
         <DayView
@@ -306,7 +313,7 @@ export default function AssistantScreen() {
         />
       );
     }
-    
+
     // Show error for unknown component types (helps debugging)
     console.warn(`Unknown UI component type: ${component.type}`);
     return (
