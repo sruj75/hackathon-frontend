@@ -47,7 +47,7 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
     (global.WebSocket as any).CLOSED = 3;
   });
 
-  it('sends init handshake with resume session + trigger type', async () => {
+  it('sends init handshake with resume session + trigger type + timezone', async () => {
     const { result } = renderHook(() =>
       useWebSocketAgent('user_test', 'session_test')
     );
@@ -72,16 +72,20 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
       expect(result.current.state.isConnected).toBe(true);
     });
 
-    expect(mockWs.send).toHaveBeenCalledWith(
-      JSON.stringify({
+    expect(mockWs.send).toHaveBeenCalledTimes(1);
+    const initPayload = JSON.parse(mockWs.send.mock.calls[0][0]);
+    expect(initPayload).toEqual(
+      expect.objectContaining({
         type: 'init',
         resume_session_id: 'session_user_test_2026-02-06',
         trigger_type: 'checkin',
       })
     );
+    expect(typeof initPayload.timezone).toBe('string');
+    expect(initPayload.timezone.length).toBeGreaterThan(0);
   });
 
-  it('does not send init handshake for fresh sessions', async () => {
+  it('sends init handshake for fresh sessions', async () => {
     const { result } = renderHook(() =>
       useWebSocketAgent('user_test', 'session_test')
     );
@@ -99,7 +103,13 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
       expect(result.current.state.isConnected).toBe(true);
     });
 
-    expect(mockWs.send).not.toHaveBeenCalled();
+    expect(mockWs.send).toHaveBeenCalledTimes(1);
+    const initPayload = JSON.parse(mockWs.send.mock.calls[0][0]);
+    expect(initPayload.type).toBe('init');
+    expect(initPayload.resume_session_id).toBeUndefined();
+    expect(initPayload.trigger_type).toBeUndefined();
+    expect(typeof initPayload.timezone).toBe('string');
+    expect(initPayload.timezone.length).toBeGreaterThan(0);
   });
 
   it('routes generative_ui events to onUIComponent callback only', () => {

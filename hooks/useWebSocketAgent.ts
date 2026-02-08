@@ -39,6 +39,7 @@ export interface ADKEvent {
 export interface ConnectOptions {
   resume_session_id?: string;
   trigger_type?: string;
+  timezone?: string;
 }
 
 export interface UseWebSocketAgentReturn {
@@ -126,17 +127,26 @@ export function useWebSocketAgent(
 
         ws.onopen = () => {
           console.log('WebSocket connected');
-
-          // Send init handshake if resuming session
-          if (options?.resume_session_id || options?.trigger_type) {
-            const initMessage = {
-              type: 'init',
-              resume_session_id: options.resume_session_id,
-              trigger_type: options.trigger_type,
-            };
-            console.log('[WS-INIT] Sending init handshake:', initMessage);
-            ws.send(JSON.stringify(initMessage));
+          let timezone = options?.timezone || 'UTC';
+          if (!options?.timezone) {
+            try {
+              timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+            } catch (error) {
+              console.warn(
+                '[WS-INIT] Failed to detect device timezone, using UTC',
+                error
+              );
+            }
           }
+
+          const initMessage = {
+            type: 'init',
+            resume_session_id: options?.resume_session_id,
+            trigger_type: options?.trigger_type,
+            timezone,
+          };
+          console.log('[WS-INIT] Sending init handshake:', initMessage);
+          ws.send(JSON.stringify(initMessage));
 
           setState({ isConnected: true, isConnecting: false, error: null });
           retryCountRef.current = 0; // Reset retries on success
