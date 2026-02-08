@@ -62,8 +62,8 @@ export interface GenerativeUIEvent {
 }
 
 export function useWebSocketAgent(
-  userId: string = `user-${Date.now()}`,
-  sessionId: string = `session-${Date.now()}`
+  userId: string,
+  sessionId: string
 ): UseWebSocketAgentReturn {
   const [state, setState] = useState<WebSocketState>({
     isConnected: false,

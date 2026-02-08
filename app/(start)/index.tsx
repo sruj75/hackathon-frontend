@@ -124,7 +124,6 @@ export default function StartScreen() {
           wake_time: wakeTime,
           bedtime: bedtime,
           timezone,
-          health_anchors: [],
         }),
       });
 
@@ -132,6 +131,23 @@ export default function StartScreen() {
         const errorBody = await response.text();
         setErrorMessage(
           `Could not save preferences (${response.status}): ${errorBody}`
+        );
+        setConnecting(false);
+        return;
+      }
+
+      const responseBody = await response
+        .json()
+        .catch(() => ({ status: 'unknown', scheduler: null }));
+      const schedulerResynced = responseBody?.scheduler?.resynced;
+      if (
+        responseBody?.status === 'partial_success' ||
+        schedulerResynced === false
+      ) {
+        const schedulerError =
+          responseBody?.scheduler?.error || 'scheduler sync failed';
+        setErrorMessage(
+          `Preferences saved, but alarm scheduling failed: ${schedulerError}`
         );
         setConnecting(false);
         return;
