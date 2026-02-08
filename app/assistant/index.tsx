@@ -20,12 +20,10 @@ import {
   GenerativeUIEvent,
 } from '@/hooks/useWebSocketAgent';
 import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
+import { getSingleUserId } from '@/constants/user';
 
 // Generative UI Components
 import { DayView } from '../../components/generative/DayView';
-
-// Hardcoded userId for v0 (matches root layout)
-const USER_ID = 'user_default';
 
 interface Transcription {
   participant: string;
@@ -38,6 +36,8 @@ type ViewMode = 'voice' | 'chat' | 'ui';
 export default function AssistantScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const userId = getSingleUserId();
+  const transcriptionUserId = userId || 'User';
 
   const resumeSessionId = Array.isArray(params.resume_session_id)
     ? params.resume_session_id[0]
@@ -72,7 +72,7 @@ export default function AssistantScreen() {
     onEvent,
     onAudio,
     onUIComponent,
-  } = useWebSocketAgent(USER_ID, sessionId);
+  } = useWebSocketAgent(userId || '', sessionId);
 
   // Audio recording and playback
   const { isRecording, startRecording, stopRecording, onAudioData } =
@@ -97,6 +97,12 @@ export default function AssistantScreen() {
 
   // Connect on mount with session resumption params if available
   useEffect(() => {
+    if (!userId) {
+      console.error(
+        '[AssistantScreen] EXPO_PUBLIC_SINGLE_USER_ID not configured; cannot connect'
+      );
+      return;
+    }
     const connectOptions =
       resumeSessionId || triggerType
         ? {
@@ -109,7 +115,7 @@ export default function AssistantScreen() {
     return () => {
       disconnect();
     };
-  }, [connect, disconnect, resumeSessionId, triggerType]);
+  }, [connect, disconnect, resumeSessionId, triggerType, userId]);
 
   // Auto-start recording when WebSocket connects for real-time streaming
   const hasAutoStartedRef = React.useRef(false);
@@ -203,7 +209,10 @@ export default function AssistantScreen() {
 
       // Handle input transcription (user speech)
       if (event.serverContent?.inputTranscription?.text) {
-        addTranscription(USER_ID, event.serverContent.inputTranscription.text);
+        addTranscription(
+          transcriptionUserId,
+          event.serverContent.inputTranscription.text
+        );
       }
 
       // Handle output transcription (agent speech) - already complete
@@ -266,7 +275,7 @@ export default function AssistantScreen() {
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onEvent, addTranscription]);
+  }, [onEvent, addTranscription, transcriptionUserId]);
 
   // Control callbacks
   const onMicClick = useCallback(async () => {
@@ -305,11 +314,14 @@ export default function AssistantScreen() {
 
   const onChatSend = useCallback(
     (message: string) => {
-      addTranscription(USER_ID, message);
+      if (!userId) {
+        return;
+      }
+      addTranscription(transcriptionUserId, message);
       sendText(message);
       setChatMessage('');
     },
-    [sendText, addTranscription]
+    [sendText, addTranscription, transcriptionUserId, userId]
   );
 
   // Render Generative UI component based on type
