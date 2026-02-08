@@ -4,18 +4,34 @@ import { act, render, waitFor } from '@testing-library/react-native';
 import { useWebSocketAgent } from '@/hooks/useWebSocketAgent';
 import { DayView } from '@/components/generative/DayView';
 
-const mockWsInstance = {
-  send: jest.fn(),
-  close: jest.fn(),
-  readyState: 1,
-  onopen: null as ((event: Event) => void) | null,
-  onclose: null as ((event: CloseEvent) => void) | null,
-  onerror: null as ((event: Event) => void) | null,
-  onmessage: null as ((event: MessageEvent) => void) | null,
-};
+let mockWsInstance:
+  | {
+      send: jest.Mock;
+      close: jest.Mock;
+      readyState: number;
+      onopen: ((event: Event) => void) | null;
+      onclose: ((event: CloseEvent) => void) | null;
+      onerror: ((event: Event) => void) | null;
+      onmessage: ((event: MessageEvent) => void) | null;
+    }
+  | null = null;
 
-global.WebSocket = jest.fn().mockImplementation(() => mockWsInstance) as any;
+global.WebSocket = jest
+  .fn()
+  .mockImplementation(() => {
+    mockWsInstance = {
+      send: jest.fn(),
+      close: jest.fn(),
+      readyState: 1,
+      onopen: null,
+      onclose: null,
+      onerror: null,
+      onmessage: null,
+    };
+    return mockWsInstance;
+  }) as any;
 (global.WebSocket as any).OPEN = 1;
+(global.WebSocket as any).CONNECTING = 0;
 
 // Mock expo-linear-gradient for DayView
 jest.mock('expo-linear-gradient', () => ({
@@ -29,10 +45,7 @@ describe('Generative UI Integration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.EXPO_PUBLIC_BACKEND_URL = 'http://localhost:8080';
-    mockWsInstance.onopen = null;
-    mockWsInstance.onclose = null;
-    mockWsInstance.onerror = null;
-    mockWsInstance.onmessage = null;
+    mockWsInstance = null;
   });
 
   it('renders day_view from WebSocket generative_ui events', async () => {
@@ -59,9 +72,16 @@ describe('Generative UI Integration', () => {
 
     const { getByText, getByTestId } = render(<TestComponent />);
 
+    await waitFor(() => {
+      expect(mockWsInstance).not.toBeNull();
+      expect(typeof mockWsInstance?.onopen).toBe('function');
+      expect(typeof mockWsInstance?.onmessage).toBe('function');
+    });
+    const ws = mockWsInstance!;
+
     act(() => {
-      mockWsInstance.onopen?.(new Event('open'));
-      mockWsInstance.onmessage?.(
+      ws.onopen?.(new Event('open'));
+      ws.onmessage?.(
         new MessageEvent('message', {
           data: JSON.stringify({
             type: 'generative_ui',
@@ -115,9 +135,16 @@ describe('Generative UI Integration', () => {
 
     const { getByText, queryByText } = render(<TestComponent />);
 
+    await waitFor(() => {
+      expect(mockWsInstance).not.toBeNull();
+      expect(typeof mockWsInstance?.onopen).toBe('function');
+      expect(typeof mockWsInstance?.onmessage).toBe('function');
+    });
+    const ws = mockWsInstance!;
+
     act(() => {
-      mockWsInstance.onopen?.(new Event('open'));
-      mockWsInstance.onmessage?.(
+      ws.onopen?.(new Event('open'));
+      ws.onmessage?.(
         new MessageEvent('message', {
           data: JSON.stringify({
             type: 'generative_ui',
@@ -138,7 +165,7 @@ describe('Generative UI Integration', () => {
     });
 
     act(() => {
-      mockWsInstance.onmessage?.(
+      ws.onmessage?.(
         new MessageEvent('message', {
           data: JSON.stringify({
             type: 'generative_ui',
@@ -159,7 +186,7 @@ describe('Generative UI Integration', () => {
     });
   });
 
-  it('ignores malformed WebSocket JSON safely', () => {
+  it('ignores malformed WebSocket JSON safely', async () => {
     const consoleErrorSpy = jest
       .spyOn(console, 'error')
       .mockImplementation(() => undefined);
@@ -178,9 +205,16 @@ describe('Generative UI Integration', () => {
 
     render(<TestComponent />);
 
+    await waitFor(() => {
+      expect(mockWsInstance).not.toBeNull();
+      expect(typeof mockWsInstance?.onopen).toBe('function');
+      expect(typeof mockWsInstance?.onmessage).toBe('function');
+    });
+    const ws = mockWsInstance!;
+
     act(() => {
-      mockWsInstance.onopen?.(new Event('open'));
-      mockWsInstance.onmessage?.(
+      ws.onopen?.(new Event('open'));
+      ws.onmessage?.(
         new MessageEvent('message', { data: 'not-json' })
       );
     });

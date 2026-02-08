@@ -113,8 +113,14 @@ export default function AssistantScreen() {
 
   // Auto-start recording when WebSocket connects for real-time streaming
   const hasAutoStartedRef = React.useRef(false);
+  const isStoppingRecordingRef = React.useRef(false);
   useEffect(() => {
-    if (wsState.isConnected && !isRecording && !hasAutoStartedRef.current) {
+    if (
+      wsState.isConnected &&
+      !isRecording &&
+      !hasAutoStartedRef.current &&
+      !isStoppingRecordingRef.current
+    ) {
       console.log('Auto-starting real-time recording...');
       startRecording()
         .then(() => {
@@ -125,6 +131,22 @@ export default function AssistantScreen() {
         .catch((err) => console.error('Failed to start recording:', err));
     }
   }, [wsState.isConnected, isRecording, startRecording]);
+
+  // Ensure recording is torn down when WebSocket disconnects.
+  useEffect(() => {
+    if (!wsState.isConnected) {
+      hasAutoStartedRef.current = false;
+      if (isRecording && !isStoppingRecordingRef.current) {
+        isStoppingRecordingRef.current = true;
+        stopRecording()
+          .catch((err) => console.error('Failed to stop recording:', err))
+          .finally(() => {
+            isStoppingRecordingRef.current = false;
+          });
+      }
+      setIsMicEnabled(false);
+    }
+  }, [wsState.isConnected, isRecording, stopRecording]);
 
   // Set up audio data callback - stream audio chunks to WebSocket in real-time
   useEffect(() => {
@@ -274,11 +296,12 @@ export default function AssistantScreen() {
     }
   }, [viewMode, uiComponents.length, isPlaying, stopPlayback]);
 
-  const onExitClick = useCallback(() => {
+  const onExitClick = useCallback(async () => {
+    await stopRecording();
     disconnect();
-    stopPlayback();
+    await stopPlayback();
     router.back();
-  }, [router, disconnect, stopPlayback]);
+  }, [router, disconnect, stopPlayback, stopRecording]);
 
   const onChatSend = useCallback(
     (message: string) => {

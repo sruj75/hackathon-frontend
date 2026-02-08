@@ -17,6 +17,8 @@ export function useAudioRecording(): UseAudioRecordingReturn {
   const audioDataCallbackRef = useRef<((data: ArrayBuffer) => void) | null>(
     null
   );
+  const isStartInFlightRef = useRef(false);
+  const isStopInFlightRef = useRef(false);
 
   const {
     isRecording,
@@ -30,6 +32,12 @@ export function useAudioRecording(): UseAudioRecordingReturn {
   });
 
   const startRecording = useCallback(async () => {
+    if (isRecording || isStartInFlightRef.current) {
+      return;
+    }
+
+    isStartInFlightRef.current = true;
+
     try {
       // Request permissions
       const permissionResult = await requestPermissions();
@@ -74,19 +82,46 @@ export function useAudioRecording(): UseAudioRecordingReturn {
         '[AUDIO] ✅ Recording started with expo-realtime-audio (16kHz, speaker routing enabled)'
       );
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      if (errorMessage.toLowerCase().includes('already in progress')) {
+        console.log('[AUDIO] Recording already in progress, skipping start');
+        return;
+      }
       console.error('[AUDIO] Failed to start recording:', error);
       throw error;
+    } finally {
+      isStartInFlightRef.current = false;
     }
-  }, [streamStartRecording, requestPermissions]);
+  }, [isRecording, streamStartRecording, requestPermissions]);
 
   const stopRecording = useCallback(async () => {
+    if (
+      (!isRecording && !isStartInFlightRef.current) ||
+      isStopInFlightRef.current
+    ) {
+      return;
+    }
+
+    isStopInFlightRef.current = true;
+
     try {
       await streamStopRecording();
       console.log('[AUDIO] Recording stopped');
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.toLowerCase().includes('not recording') ||
+        errorMessage.toLowerCase().includes('not in progress')
+      ) {
+        return;
+      }
       console.error('[AUDIO] Failed to stop recording:', error);
+    } finally {
+      isStopInFlightRef.current = false;
     }
-  }, [streamStopRecording]);
+  }, [isRecording, streamStopRecording]);
 
   const onAudioData = useCallback((callback: (data: ArrayBuffer) => void) => {
     audioDataCallbackRef.current = callback;
@@ -112,6 +147,7 @@ export interface UseAudioPlaybackReturn {
 
 export function useAudioPlayback(): UseAudioPlaybackReturn {
   const playbackInitializedRef = useRef(false);
+  const playbackInitPromiseRef = useRef<Promise<void> | null>(null);
 
   const {
     isPlaying,
@@ -129,18 +165,29 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
       return;
     }
 
-    try {
-      await streamStartPlayback({
-        sampleRate: 24000, // Gemini sends 24kHz audio
-        channels: 1,
-      });
-
-      playbackInitializedRef.current = true;
-      console.log('[AUDIO] ✅ Playback initialized (24kHz, speaker routing)');
-    } catch (error) {
-      console.error('[AUDIO] Failed to initialize playback:', error);
-      throw error;
+    if (playbackInitPromiseRef.current) {
+      await playbackInitPromiseRef.current;
+      return;
     }
+
+    playbackInitPromiseRef.current = (async () => {
+      try {
+        await streamStartPlayback({
+          sampleRate: 24000, // Gemini sends 24kHz audio
+          channels: 1,
+        });
+
+        playbackInitializedRef.current = true;
+        console.log('[AUDIO] ✅ Playback initialized (24kHz, speaker routing)');
+      } catch (error) {
+        console.error('[AUDIO] Failed to initialize playback:', error);
+        throw error;
+      } finally {
+        playbackInitPromiseRef.current = null;
+      }
+    })();
+
+    await playbackInitPromiseRef.current;
   }, [streamStartPlayback]);
 
   const playAudio = useCallback(
