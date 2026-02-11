@@ -64,8 +64,8 @@ export interface GenerativeUIEvent {
 }
 
 export function useWebSocketAgent(
-  userId: string,
-  sessionId: string
+  sessionId: string,
+  accessToken: string | null
 ): UseWebSocketAgentReturn {
   const [state, setState] = useState<WebSocketState>({
     isConnected: false,
@@ -104,8 +104,8 @@ export function useWebSocketAgent(
 
     // Convert http(s) to ws(s) - assumes WS runs on same host:port as HTTP
     const wsUrl = baseUrl.replace(/^http/, 'ws');
-    return `${wsUrl}/ws/${userId}/${sessionId}`;
-  }, [userId, sessionId]);
+    return `${wsUrl}/ws/${sessionId}`;
+  }, [sessionId]);
 
   const connect = useCallback(
     (options?: ConnectOptions) => {
@@ -120,6 +120,15 @@ export function useWebSocketAgent(
       // Store options for retry attempts
       connectOptionsRef.current = options;
 
+      if (!accessToken) {
+        setState({
+          isConnected: false,
+          isConnecting: false,
+          error: 'Missing access token',
+        });
+        return;
+      }
+
       setState({ isConnected: false, isConnecting: true, error: null });
 
       try {
@@ -129,21 +138,18 @@ export function useWebSocketAgent(
 
         ws.onopen = () => {
           console.log('WebSocket connected');
-          let timezone = options?.timezone || 'UTC';
+          let timezone = options?.timezone;
           if (!options?.timezone) {
             try {
-              timezone =
-                Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+              timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
             } catch (error) {
-              console.warn(
-                '[WS-INIT] Failed to detect device timezone, using UTC',
-                error
-              );
+              console.warn('[WS-INIT] Failed to detect device timezone', error);
             }
           }
 
           const initMessage = {
             type: 'init',
+            access_token: accessToken,
             resume_session_id: options?.resume_session_id,
             trigger_type: options?.trigger_type,
             timezone,
@@ -260,7 +266,7 @@ export function useWebSocketAgent(
         });
       }
     },
-    [getWebSocketUrl]
+    [accessToken, getWebSocketUrl]
   );
 
   const disconnect = useCallback(() => {

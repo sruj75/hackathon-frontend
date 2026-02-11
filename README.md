@@ -16,7 +16,8 @@ cp .env.example .env
 
 3. Fill in your backend URL in `.env`:
    - `EXPO_PUBLIC_BACKEND_URL` - Your Vercel or local backend URL (e.g., `http://localhost:3000/api`)
-   - `EXPO_PUBLIC_SINGLE_USER_ID` - Single account ID used across this personal/testing app
+   - `EXPO_PUBLIC_SUPABASE_URL` - Supabase project URL
+   - `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` - Supabase publishable key
 
 4. (Optional) Install EAS CLI for builds:
 ```bash

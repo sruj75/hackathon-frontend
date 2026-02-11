@@ -1,12 +1,17 @@
 import React from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
-import StartScreen from '@/app/(start)/index';
-
 const mockNavigate = jest.fn();
+const mockSignIn = jest.fn();
+const mockGetAccessToken = jest.fn(async () => 'jwt_test');
 
-jest.mock('@/constants/user', () => ({
-  getSingleUserId: () => 'user_test',
+jest.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({
+    user: { id: 'user_test' },
+    isLoading: false,
+    signInWithGoogle: mockSignIn,
+    getAccessToken: mockGetAccessToken,
+  }),
 }));
 
 jest.mock('expo-router', () => {
@@ -16,10 +21,12 @@ jest.mock('expo-router', () => {
       navigate: mockNavigate,
     }),
     useFocusEffect: (effect: () => void | (() => void)) => {
-      ReactModule.useEffect(() => effect(), [effect]);
+      ReactModule.useEffect(() => effect(), []);
     },
   };
 });
+
+import StartScreen from '@/app/(start)/index';
 
 global.fetch = jest.fn();
 
@@ -43,7 +50,7 @@ describe('StartScreen preference regressions', () => {
           preferences: {
             wake_time: '07:00',
             bedtime: '22:30',
-            timezone: 'UTC',
+            timezone: 'America/New_York',
             health_anchors: ['sleep'],
           },
         }),
@@ -66,7 +73,7 @@ describe('StartScreen preference regressions', () => {
       expect(getByDisplayValue('22:30')).toBeTruthy();
     });
 
-    fireEvent.press(getByText('Start Voice Assistant'));
+    fireEvent.press(getByText('Start Conversation'));
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledTimes(2);
@@ -75,6 +82,8 @@ describe('StartScreen preference regressions', () => {
     const putCall = (global.fetch as jest.Mock).mock.calls[1];
     const putBody = JSON.parse(putCall[1].body as string);
 
+    expect(putCall[0]).toBe('http://localhost:8080/api/preferences/me');
+    expect(putCall[1].headers.Authorization).toBe('Bearer jwt_test');
     expect(putBody.wake_time).toBe('07:00');
     expect(putBody.bedtime).toBe('22:30');
     expect(putBody.timezone).toBeTruthy();
@@ -98,7 +107,7 @@ describe('StartScreen preference regressions', () => {
           preferences: {
             wake_time: '08:15',
             bedtime: '23:00',
-            timezone: 'UTC',
+            timezone: 'America/New_York',
           },
         }),
       })
@@ -120,7 +129,7 @@ describe('StartScreen preference regressions', () => {
       expect(getByDisplayValue('23:00')).toBeTruthy();
     });
 
-    fireEvent.press(getByText('Start Voice Assistant'));
+    fireEvent.press(getByText('Start Conversation'));
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledTimes(2);

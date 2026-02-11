@@ -4,32 +4,28 @@ import { act, render, waitFor } from '@testing-library/react-native';
 import { useWebSocketAgent } from '@/hooks/useWebSocketAgent';
 import { DayView } from '@/components/generative/DayView';
 
-let mockWsInstance:
-  | {
-      send: jest.Mock;
-      close: jest.Mock;
-      readyState: number;
-      onopen: ((event: Event) => void) | null;
-      onclose: ((event: CloseEvent) => void) | null;
-      onerror: ((event: Event) => void) | null;
-      onmessage: ((event: MessageEvent) => void) | null;
-    }
-  | null = null;
+let mockWsInstance: {
+  send: jest.Mock;
+  close: jest.Mock;
+  readyState: number;
+  onopen: ((event: Event) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onmessage: ((event: MessageEvent) => void) | null;
+} | null = null;
 
-global.WebSocket = jest
-  .fn()
-  .mockImplementation(() => {
-    mockWsInstance = {
-      send: jest.fn(),
-      close: jest.fn(),
-      readyState: 1,
-      onopen: null,
-      onclose: null,
-      onerror: null,
-      onmessage: null,
-    };
-    return mockWsInstance;
-  }) as any;
+global.WebSocket = jest.fn().mockImplementation(() => {
+  mockWsInstance = {
+    send: jest.fn(),
+    close: jest.fn(),
+    readyState: 1,
+    onopen: null,
+    onclose: null,
+    onerror: null,
+    onmessage: null,
+  };
+  return mockWsInstance;
+}) as any;
 (global.WebSocket as any).OPEN = 1;
 (global.WebSocket as any).CONNECTING = 0;
 
@@ -51,8 +47,8 @@ describe('Generative UI Integration', () => {
   it('renders day_view from WebSocket generative_ui events', async () => {
     const TestComponent = () => {
       const { onUIComponent, connect } = useWebSocketAgent(
-        'user_test',
-        'session_test'
+        'session_test',
+        'jwt_test'
       );
       const [uiEvent, setUIEvent] = React.useState<any>(null);
 
@@ -113,8 +109,8 @@ describe('Generative UI Integration', () => {
   it('replaces UI with the latest component event', async () => {
     const TestComponent = () => {
       const { onUIComponent, connect } = useWebSocketAgent(
-        'user_test',
-        'session_test'
+        'session_test',
+        'jwt_test'
       );
       const [uiEvent, setUIEvent] = React.useState<any>(null);
 
@@ -149,10 +145,10 @@ describe('Generative UI Integration', () => {
           data: JSON.stringify({
             type: 'generative_ui',
             component: 'day_view',
-            props: { 
+            props: {
               events: [],
               tasks: [{ id: 't1', title: 'Old', status: 'pending' }],
-              display_mode: 'planning'
+              display_mode: 'planning',
             },
           }),
         })
@@ -170,10 +166,10 @@ describe('Generative UI Integration', () => {
           data: JSON.stringify({
             type: 'generative_ui',
             component: 'day_view',
-            props: { 
+            props: {
               events: [],
               tasks: [{ id: 't2', title: 'New', status: 'pending' }],
-              display_mode: 'planning'
+              display_mode: 'planning',
             },
           }),
         })
@@ -193,8 +189,8 @@ describe('Generative UI Integration', () => {
     const onUI = jest.fn();
     const TestComponent = () => {
       const { connect, onUIComponent } = useWebSocketAgent(
-        'user_test',
-        'session_test'
+        'session_test',
+        'jwt_test'
       );
       React.useEffect(() => {
         connect();
@@ -214,9 +210,7 @@ describe('Generative UI Integration', () => {
 
     act(() => {
       ws.onopen?.(new Event('open'));
-      ws.onmessage?.(
-        new MessageEvent('message', { data: 'not-json' })
-      );
+      ws.onmessage?.(new MessageEvent('message', { data: 'not-json' }));
     });
 
     expect(onUI).not.toHaveBeenCalled();

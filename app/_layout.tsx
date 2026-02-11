@@ -10,24 +10,19 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { useNotifications } from '@/hooks/useNotifications';
-import { getSingleUserId } from '@/constants/user';
 
-export default function RootLayout() {
+function RootLayoutNavigator() {
   const colorScheme = useColorScheme();
   const router = useRouter();
-  const userId = getSingleUserId();
+  const { getAccessToken, user } = useAuth();
 
   // Setup push notifications
-  useNotifications(userId ?? '');
+  useNotifications(getAccessToken);
 
   // Handle notification taps (deep linking)
   useEffect(() => {
-    if (!userId) {
-      console.error(
-        '[RootLayout] EXPO_PUBLIC_SINGLE_USER_ID not configured; notifications are disabled'
-      );
-    }
     const subscription = Notifications.addNotificationResponseReceivedListener(
       (response) => {
         const data = response.notification.request.content.data;
@@ -53,7 +48,7 @@ export default function RootLayout() {
     return () => {
       subscription.remove();
     };
-  }, [router, userId]);
+  }, [router, user]);
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -63,5 +58,13 @@ export default function RootLayout() {
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <AuthProvider>
+      <RootLayoutNavigator />
+    </AuthProvider>
   );
 }

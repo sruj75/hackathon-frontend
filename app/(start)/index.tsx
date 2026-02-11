@@ -7,8 +7,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
+  Linking,
 } from 'react-native';
-import { getSingleUserId } from '@/constants/user';
+import { useAuth } from '@/hooks/useAuth';
 
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
@@ -18,10 +19,11 @@ export default function StartScreen() {
   const [wakeTime, setWakeTime] = useState('');
   const [bedtime, setBedtime] = useState('');
   const [isLoadingPrefs, setIsLoadingPrefs] = useState(true);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
-  const userId = getSingleUserId();
+  const { user, isLoading, signInWithGoogle, getAccessToken } = useAuth();
 
   const timezone = useMemo(() => {
     try {
@@ -33,9 +35,11 @@ export default function StartScreen() {
 
   const loadPreferences = useCallback(async () => {
     setIsLoadingPrefs(true);
-    if (!userId) {
-      setErrorMessage('EXPO_PUBLIC_SINGLE_USER_ID is missing');
+    if (!user) {
+      setWakeTime('');
+      setBedtime('');
       setIsLoadingPrefs(false);
+      setErrorMessage(null);
       return;
     }
     if (!backendUrl) {
@@ -44,8 +48,19 @@ export default function StartScreen() {
       return;
     }
 
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      setErrorMessage('Missing auth token');
+      setIsLoadingPrefs(false);
+      return;
+    }
+
     try {
-      const response = await fetch(`${backendUrl}/api/preferences/${userId}`);
+      const response = await fetch(`${backendUrl}/api/preferences/me`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
       if (!response.ok) {
         setErrorMessage(`Failed to load preferences (${response.status})`);
         setIsLoadingPrefs(false);
@@ -67,7 +82,7 @@ export default function StartScreen() {
     } finally {
       setIsLoadingPrefs(false);
     }
-  }, [backendUrl, userId]);
+  }, [backendUrl, getAccessToken, user]);
 
   useFocusEffect(
     useCallback(() => {
@@ -92,6 +107,17 @@ export default function StartScreen() {
   };
 
   const handleConnect = async () => {
+    if (!user) {
+      try {
+        await signInWithGoogle();
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : 'Google sign-in failed'
+        );
+      }
+      return;
+    }
+
     setConnecting(true);
     setErrorMessage(null);
 
@@ -102,8 +128,9 @@ export default function StartScreen() {
       setConnecting(false);
       return;
     }
-    if (!userId) {
-      setErrorMessage('EXPO_PUBLIC_SINGLE_USER_ID is missing');
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      setErrorMessage('Missing auth token');
       setConnecting(false);
       return;
     }
@@ -114,10 +141,11 @@ export default function StartScreen() {
     }
 
     try {
-      const response = await fetch(`${backendUrl}/api/preferences/${userId}`, {
+      const response = await fetch(`${backendUrl}/api/preferences/me`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           wake_time: wakeTime,
@@ -165,17 +193,80 @@ export default function StartScreen() {
     }, 500);
   };
 
-  const connectText = isConnecting ? 'Connecting' : 'Start';
+  const handleConnectGoogle = async () => {
+    if (!user) {
+      setErrorMessage('Sign in first');
+      return;
+    }
+    if (!backendUrl) {
+      setErrorMessage('Backend URL is missing');
+      return;
+    }
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      setErrorMessage('Missing auth token');
+      return;
+    }
+
+    setIsConnectingGoogle(true);
+    setErrorMessage(null);
+    try {
+      const response = await fetch(
+        `${backendUrl}/api/integrations/composio/connect-link`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        }
+      );
+      if (!response.ok) {
+        setErrorMessage(`Failed to create connect link (${response.status})`);
+        setIsConnectingGoogle(false);
+        return;
+      }
+
+      const body = await response.json();
+      const firstLink =
+        Array.isArray(body?.links) && body.links.length > 0
+          ? body.links[0]
+          : null;
+      if (!firstLink?.redirect_url) {
+        setErrorMessage('No Composio OAuth redirect link returned');
+        setIsConnectingGoogle(false);
+        return;
+      }
+
+      await Linking.openURL(firstLink.redirect_url);
+      setErrorMessage(
+        'Complete Google auth in browser, then return and repeat if needed for remaining apps.'
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to open Google OAuth'
+      );
+    } finally {
+      setIsConnectingGoogle(false);
+    }
+  };
+
+  const connectText = !user
+    ? 'Sign In With Google'
+    : isConnecting
+    ? 'Connecting'
+    : 'Start Conversation';
 
   return (
     <View style={styles.container}>
-      <Text style={styles.text}>Welcome to Intentive</Text>
+      <Text style={styles.text}>Intentive</Text>
 
       <TouchableOpacity
         onPress={handleConnect}
         style={styles.button}
         activeOpacity={0.7}
-        disabled={isConnecting || isLoadingPrefs || !userId}
+        disabled={isConnecting || isLoadingPrefs || isLoading}
       >
         {isConnecting ? (
           <ActivityIndicator
@@ -187,9 +278,28 @@ export default function StartScreen() {
 
         <Text style={styles.buttonText}>{connectText}</Text>
       </TouchableOpacity>
+      {user ? (
+        <TouchableOpacity
+          onPress={handleConnectGoogle}
+          style={styles.secondaryButton}
+          activeOpacity={0.7}
+          disabled={isConnectingGoogle}
+        >
+          <Text style={styles.buttonText}>
+            {isConnectingGoogle
+              ? 'Opening Google Connect...'
+              : 'Connect Google Tools'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
 
       <View style={styles.preferencesCard}>
         <Text style={styles.preferencesTitle}>Daily Preferences</Text>
+        {!user ? (
+          <Text style={styles.inputLabel}>
+            Sign in first, then set wake time, bedtime, and timezone.
+          </Text>
+        ) : null}
 
         <Text style={styles.inputLabel}>Set your alarm (wake time)</Text>
         <TextInput
@@ -198,7 +308,7 @@ export default function StartScreen() {
           placeholderTextColor="#999999"
           value={wakeTime}
           onChangeText={setWakeTime}
-          editable={!isConnecting && !isLoadingPrefs}
+          editable={!isConnecting && !isLoadingPrefs && !!user}
           autoCapitalize="none"
           autoCorrect={false}
         />
@@ -210,7 +320,7 @@ export default function StartScreen() {
           placeholderTextColor="#999999"
           value={bedtime}
           onChangeText={setBedtime}
-          editable={!isConnecting && !isLoadingPrefs}
+          editable={!isConnecting && !isLoadingPrefs && !!user}
           autoCapitalize="none"
           autoCorrect={false}
         />
@@ -277,6 +387,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minWidth: 200,
+  },
+  secondaryButton: {
+    flexDirection: 'row',
+    backgroundColor: '#1E7B34',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 200,
+    marginTop: 12,
   },
   buttonText: {
     color: '#ffffff',

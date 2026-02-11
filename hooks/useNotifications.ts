@@ -1,15 +1,6 @@
 import { useEffect, useState } from 'react';
-import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
-
-/**
- * Hook to manage push notification permissions and token registration.
- *
- * Philosophy (v0):
- * - Request permissions on app launch (reliability over UX)
- * - If user denies: Accept it, feature won't work
- * - If POST fails: Accept failure, will retry on next app open
- */
+import * as Notifications from 'expo-notifications';
 
 interface UseNotificationsResult {
   isReady: boolean;
@@ -18,61 +9,55 @@ interface UseNotificationsResult {
   error: string | null;
 }
 
-export function useNotifications(userId: string): UseNotificationsResult {
+type AccessTokenResolver = () => Promise<string | null>;
+
+export function useNotifications(
+  getAccessToken: AccessTokenResolver
+): UseNotificationsResult {
   const [isReady, setIsReady] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!userId) {
-      return;
-    }
-
     async function setupNotifications() {
       try {
-        // 1. Check if running on physical device (push notifications don't work in simulator)
         if (!Device.isDevice) {
-          console.log(
-            '[useNotifications] Not a physical device, skipping push notification setup'
-          );
           setIsReady(true);
           return;
         }
 
-        // 2. Request permissions
         const { status: existingStatus } =
           await Notifications.getPermissionsAsync();
         let finalStatus = existingStatus;
-
         if (existingStatus !== 'granted') {
           const { status } = await Notifications.requestPermissionsAsync();
           finalStatus = status;
         }
 
         if (finalStatus !== 'granted') {
-          console.log('[useNotifications] Permission denied by user');
           setHasPermission(false);
           setIsReady(true);
           return;
         }
 
+        const accessToken = await getAccessToken();
+        if (!accessToken) {
+          setError('missing_access_token');
+          setIsReady(true);
+          return;
+        }
         setHasPermission(true);
 
-        // 3. Get Expo push token
         const tokenData = await Notifications.getExpoPushTokenAsync({
-          projectId: 'c4e705ec-1671-4e31-ba01-43d1bc1234c7', // From app.json
+          projectId: 'c4e705ec-1671-4e31-ba01-43d1bc1234c7',
         });
         const pushToken = tokenData.data;
         setToken(pushToken);
-        console.log('[useNotifications] Got push token:', pushToken);
 
-        // 4. POST token to backend
         const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
         if (!backendUrl) {
-          console.warn(
-            '[useNotifications] EXPO_PUBLIC_BACKEND_URL not configured'
-          );
+          setError('missing_backend_url');
           setIsReady(true);
           return;
         }
@@ -81,46 +66,27 @@ export function useNotifications(userId: string): UseNotificationsResult {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({
-            user_id: userId,
-            token: pushToken,
-          }),
+          body: JSON.stringify({ token: pushToken }),
         });
-
         if (!response.ok) {
-          // Accept failure, don't retry (v0 simplicity)
-          console.warn(
-            '[useNotifications] Failed to save token to backend:',
-            response.status
-          );
-        } else {
-          console.log('[useNotifications] Token saved to backend successfully');
+          setError(`save_token_failed_${response.status}`);
         }
-
         setIsReady(true);
       } catch (err) {
-        // Accept failure gracefully
-        const errorMessage =
-          err instanceof Error ? err.message : 'Unknown error';
-        console.error('[useNotifications] Setup error:', errorMessage);
-        setError(errorMessage);
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        setError(message);
         setIsReady(true);
       }
     }
 
     setupNotifications();
-  }, [userId]);
+  }, [getAccessToken]);
 
-  return {
-    isReady,
-    hasPermission,
-    token,
-    error,
-  };
+  return { isReady, hasPermission, token, error };
 }
 
-// Configure notification behavior (how they appear when app is foregrounded)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,

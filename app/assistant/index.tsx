@@ -20,7 +20,7 @@ import {
   GenerativeUIEvent,
 } from '@/hooks/useWebSocketAgent';
 import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
-import { getSingleUserId } from '@/constants/user';
+import { useAuth } from '@/hooks/useAuth';
 
 // Generative UI Components
 import { DayView } from '../../components/generative/DayView';
@@ -36,8 +36,8 @@ type ViewMode = 'voice' | 'chat' | 'ui';
 export default function AssistantScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const userId = getSingleUserId();
-  const transcriptionUserId = userId || 'User';
+  const { user, session } = useAuth();
+  const transcriptionUserId = user?.id || 'User';
 
   const resumeSessionId = Array.isArray(params.resume_session_id)
     ? params.resume_session_id[0]
@@ -72,7 +72,7 @@ export default function AssistantScreen() {
     onEvent,
     onAudio,
     onUIComponent,
-  } = useWebSocketAgent(userId || '', sessionId);
+  } = useWebSocketAgent(sessionId, session?.access_token ?? null);
 
   // Audio recording and playback
   const { isRecording, startRecording, stopRecording, onAudioData } =
@@ -85,6 +85,10 @@ export default function AssistantScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('voice');
   const [chatMessage, setChatMessage] = useState('');
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
+  const [awaitingInitialGreeting, setAwaitingInitialGreeting] = useState(true);
+  const endPlaybackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   // Streaming state for accumulating partial responses
   const [streamingTranscription, setStreamingTranscription] = useState<{
@@ -95,13 +99,13 @@ export default function AssistantScreen() {
   // Generative UI State
   const [uiComponents, setUIComponents] = useState<GenerativeUIEvent[]>([]);
   const [isPendingUIRender, setIsPendingUIRender] = useState(false);
+  const isMicUiEnabled =
+    isMicEnabled || (wsState.isConnected && awaitingInitialGreeting);
 
   // Connect on mount with session resumption params if available
   useEffect(() => {
-    if (!userId) {
-      console.error(
-        '[AssistantScreen] EXPO_PUBLIC_SINGLE_USER_ID not configured; cannot connect'
-      );
+    if (!session?.access_token) {
+      console.error('[AssistantScreen] Missing access token; cannot connect');
       return;
     }
     const connectOptions =
@@ -116,7 +120,13 @@ export default function AssistantScreen() {
     return () => {
       disconnect();
     };
-  }, [connect, disconnect, resumeSessionId, triggerType, userId]);
+  }, [
+    connect,
+    disconnect,
+    resumeSessionId,
+    session?.access_token,
+    triggerType,
+  ]);
 
   // Auto-start recording when WebSocket connects for real-time streaming
   const hasAutoStartedRef = React.useRef(false);
@@ -124,6 +134,7 @@ export default function AssistantScreen() {
   useEffect(() => {
     if (
       wsState.isConnected &&
+      !awaitingInitialGreeting &&
       !isRecording &&
       !hasAutoStartedRef.current &&
       !isStoppingRecordingRef.current
@@ -137,11 +148,20 @@ export default function AssistantScreen() {
         })
         .catch((err) => console.error('Failed to start recording:', err));
     }
-  }, [wsState.isConnected, isRecording, startRecording]);
+  }, [
+    wsState.isConnected,
+    awaitingInitialGreeting,
+    isRecording,
+    startRecording,
+  ]);
 
   // Ensure recording is torn down when WebSocket disconnects.
   useEffect(() => {
     if (!wsState.isConnected) {
+      if (endPlaybackTimerRef.current) {
+        clearTimeout(endPlaybackTimerRef.current);
+        endPlaybackTimerRef.current = null;
+      }
       hasAutoStartedRef.current = false;
       if (isRecording && !isStoppingRecordingRef.current) {
         isStoppingRecordingRef.current = true;
@@ -171,16 +191,18 @@ export default function AssistantScreen() {
   // Set up audio playback callback - play audio received from server
   useEffect(() => {
     const unsubscribe = onAudio((audioData, mimeType) => {
-      // Only play audio when in voice mode (or when explicitly enabled)
-      if (viewMode === 'voice') {
+      if (endPlaybackTimerRef.current) {
+        clearTimeout(endPlaybackTimerRef.current);
+        endPlaybackTimerRef.current = null;
+      }
+      // Keep audio output active across voice/chat/ui views.
+      // View mode should affect layout, not whether the user hears the assistant.
+      if (wsState.isConnected) {
         playAudio(audioData, mimeType);
-      } else {
-        console.log('[AUDIO] Skipping playback in chat mode');
-        // Audio received but not played - transcription will show in chat
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onAudio, playAudio, viewMode]);
+  }, [onAudio, playAudio, wsState.isConnected]);
 
   // Handle UI components from backend
   useEffect(() => {
@@ -205,6 +227,7 @@ export default function AssistantScreen() {
         console.log(
           '[CHAT] Agent interrupted, clearing streaming transcription'
         );
+        void stopPlayback();
         setStreamingTranscription(null);
       }
 
@@ -266,8 +289,15 @@ export default function AssistantScreen() {
       // Handle turn completion - finalize streaming transcription
       if (event.turnComplete) {
         console.log('[CHAT] Turn complete, finalizing streaming transcription');
-        // Signals playback drain completion so isPlaying can reset for next user turn.
-        void endPlayback();
+        setAwaitingInitialGreeting(false);
+        // Debounced end avoids cutting late-arriving audio chunks.
+        if (endPlaybackTimerRef.current) {
+          clearTimeout(endPlaybackTimerRef.current);
+        }
+        endPlaybackTimerRef.current = setTimeout(() => {
+          void endPlayback();
+          endPlaybackTimerRef.current = null;
+        }, 220);
         setStreamingTranscription((prev) => {
           if (prev && prev.text) {
             // Move streaming text to final transcriptions
@@ -278,7 +308,13 @@ export default function AssistantScreen() {
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onEvent, addTranscription, endPlayback, transcriptionUserId]);
+  }, [
+    onEvent,
+    addTranscription,
+    endPlayback,
+    stopPlayback,
+    transcriptionUserId,
+  ]);
 
   // Control callbacks
   const onMicClick = useCallback(async () => {
@@ -286,6 +322,7 @@ export default function AssistantScreen() {
       await stopRecording();
       setIsMicEnabled(false);
     } else {
+      setAwaitingInitialGreeting(false);
       await startRecording();
       setIsMicEnabled(true);
     }
@@ -317,14 +354,14 @@ export default function AssistantScreen() {
 
   const onChatSend = useCallback(
     (message: string) => {
-      if (!userId) {
+      if (!user) {
         return;
       }
       addTranscription(transcriptionUserId, message);
       sendText(message);
       setChatMessage('');
     },
-    [sendText, addTranscription, transcriptionUserId, userId]
+    [sendText, addTranscription, transcriptionUserId, user]
   );
 
   // Render Generative UI component based on type
@@ -449,7 +486,9 @@ export default function AssistantScreen() {
         <ControlBar
           style={styles.controlBar}
           options={{
-            isMicEnabled,
+            // UX: show mic as armed while waiting for agent-first greeting,
+            // but start actual capture only after greeting turn completes.
+            isMicEnabled: isMicUiEnabled,
             isCameraEnabled: false,
             isChatEnabled: viewMode === 'chat',
             onMicClick,

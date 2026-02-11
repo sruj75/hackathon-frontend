@@ -49,7 +49,7 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
 
   it('sends init handshake with resume session + trigger type + timezone', async () => {
     const { result } = renderHook(() =>
-      useWebSocketAgent('user_test', 'session_test')
+      useWebSocketAgent('session_test', 'jwt_test')
     );
 
     act(() => {
@@ -60,7 +60,7 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
     });
 
     expect(global.WebSocket).toHaveBeenCalledWith(
-      'ws://localhost:8080/ws/user_test/session_test'
+      'ws://localhost:8080/ws/session_test'
     );
 
     act(() => {
@@ -77,6 +77,7 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
     expect(initPayload).toEqual(
       expect.objectContaining({
         type: 'init',
+        access_token: 'jwt_test',
         resume_session_id: 'session_user_test_2026-02-06',
         trigger_type: 'checkin',
       })
@@ -87,7 +88,7 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
 
   it('sends init handshake for fresh sessions', async () => {
     const { result } = renderHook(() =>
-      useWebSocketAgent('user_test', 'session_test')
+      useWebSocketAgent('session_test', 'jwt_test')
     );
 
     act(() => {
@@ -106,6 +107,7 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
     expect(mockWs.send).toHaveBeenCalledTimes(1);
     const initPayload = JSON.parse(mockWs.send.mock.calls[0][0]);
     expect(initPayload.type).toBe('init');
+    expect(initPayload.access_token).toBe('jwt_test');
     expect(initPayload.resume_session_id).toBeUndefined();
     expect(initPayload.trigger_type).toBeUndefined();
     expect(typeof initPayload.timezone).toBe('string');
@@ -117,7 +119,7 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
     const onEvent = jest.fn();
 
     const { result } = renderHook(() =>
-      useWebSocketAgent('user_test', 'session_test')
+      useWebSocketAgent('session_test', 'jwt_test')
     );
 
     act(() => {
@@ -161,7 +163,7 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
     const onEvent = jest.fn();
 
     const { result } = renderHook(() =>
-      useWebSocketAgent('user_test', 'session_test')
+      useWebSocketAgent('session_test', 'jwt_test')
     );
 
     act(() => {
@@ -194,15 +196,15 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
 
     expect(onEvent).toHaveBeenCalledTimes(1);
     expect(onAudio).toHaveBeenCalledTimes(1);
-    const audioBuffer = onAudio.mock.calls[0][0] as ArrayBuffer;
-    expect(audioBuffer.byteLength).toBe(3);
+    const audioPayload = onAudio.mock.calls[0][0] as string;
+    expect(audioPayload).toBe('AQID');
   });
 
   it('surfaces invalid backend URL format as a connection error', async () => {
     process.env.EXPO_PUBLIC_BACKEND_URL = 'localhost:8080';
 
     const { result } = renderHook(() =>
-      useWebSocketAgent('user_test', 'session_test')
+      useWebSocketAgent('session_test', 'jwt_test')
     );
 
     act(() => {

@@ -153,6 +153,9 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
   const playbackInitializedRef = useRef(false);
   const playbackInitPromiseRef = useRef<Promise<void> | null>(null);
   const playbackSampleRateRef = useRef(24000);
+  const playbackQueueRef = useRef<string[]>([]);
+  const isDrainingPlaybackRef = useRef(false);
+  const playbackDrainGenerationRef = useRef(0);
 
   const {
     isPlaying,
@@ -233,7 +236,8 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
     async (audioData: ArrayBuffer | string, mimeType?: string) => {
       try {
         const detectedRate = parseSampleRateFromMime(mimeType);
-        const targetRate = detectedRate || playbackSampleRateRef.current || 24000;
+        const targetRate =
+          detectedRate || playbackSampleRateRef.current || 24000;
 
         // Re-init playback if stream sample rate changes between turns.
         if (
@@ -252,8 +256,27 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
           typeof audioData === 'string'
             ? audioData
             : arrayBufferToBase64(audioData);
+        playbackQueueRef.current.push(base64Data);
 
-        await streamPlayChunk(base64Data);
+        if (isDrainingPlaybackRef.current) {
+          return;
+        }
+        isDrainingPlaybackRef.current = true;
+        const drainGeneration = playbackDrainGenerationRef.current;
+        try {
+          while (
+            playbackQueueRef.current.length > 0 &&
+            playbackDrainGenerationRef.current === drainGeneration
+          ) {
+            const chunk = playbackQueueRef.current.shift();
+            if (!chunk) {
+              continue;
+            }
+            await streamPlayChunk(chunk);
+          }
+        } finally {
+          isDrainingPlaybackRef.current = false;
+        }
       } catch (error) {
         console.error('[AUDIO] Failed to play audio:', error);
       }
@@ -279,6 +302,9 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
 
   const stopPlayback = useCallback(async () => {
     try {
+      playbackDrainGenerationRef.current += 1;
+      playbackQueueRef.current = [];
+      isDrainingPlaybackRef.current = false;
       await streamStopPlayback();
       playbackInitializedRef.current = false;
       playbackSampleRateRef.current = 24000;

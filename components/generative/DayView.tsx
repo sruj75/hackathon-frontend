@@ -232,6 +232,17 @@ function NowFocusView({
   const displayEvent = currentBlock ? currentBlock.event : currentEvent;
   const isAtRisk =
     urgencySignals?.at_risk_events?.includes(displayEvent?.id || '') || false;
+  const hasContent = Boolean(displayEvent || nextEvent || tasks.length > 0);
+
+  if (!hasContent) {
+    return (
+      <View style={styles.emptyState}>
+        <Text style={styles.emptyText}>
+          No active block or pending tasks yet
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <>
@@ -307,6 +318,16 @@ function PlanningView({
   focusMode?: DayViewProps['focus_mode'];
   urgencySignals?: DayViewProps['urgency_signals'];
 }) {
+  const hasContent = upcomingEvents.length > 0 || tasks.length > 0;
+
+  if (!hasContent) {
+    return (
+      <View style={styles.emptyState}>
+        <Text style={styles.emptyText}>No events or tasks for today yet</Text>
+      </View>
+    );
+  }
+
   return (
     <>
       {/* Timeline */}
