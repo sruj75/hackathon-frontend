@@ -206,10 +206,11 @@ export default function AssistantScreen() {
 
   // Handle UI components from backend
   useEffect(() => {
-    onUIComponent((component: GenerativeUIEvent) => {
+    const unsubscribe = onUIComponent((component: GenerativeUIEvent) => {
       setUIComponents([component]); // Replace with new component (clearing history)
       setIsPendingUIRender(true); // Trigger collapse animation (callback will handle UI render)
     });
+    return unsubscribe;
   }, [onUIComponent]);
 
   const addTranscription = useCallback((participant: string, text: string) => {

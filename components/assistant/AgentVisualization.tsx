@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import {
   LayoutChangeEvent,
   StyleProp,
@@ -25,11 +25,27 @@ export default function AgentVisualization({
     Array.from({ length: BAR_COUNT }, () => new Animated.Value(0.3))
   );
   const [barWidth, setBarWidth] = useState(20);
+  const activeAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+  const isAnimationActiveRef = useRef(false);
 
   // Animate bars when playing audio
   useEffect(() => {
+    const stopActiveAnimation = () => {
+      if (activeAnimationRef.current) {
+        activeAnimationRef.current.stop();
+        activeAnimationRef.current = null;
+      }
+    };
+
+    isAnimationActiveRef.current = isPlaying;
+    stopActiveAnimation();
+
     if (isPlaying) {
       const animateBars = () => {
+        if (!isAnimationActiveRef.current) {
+          return;
+        }
+
         const animations = barHeights.map((height) => {
           return Animated.sequence([
             Animated.timing(height, {
@@ -45,8 +61,10 @@ export default function AgentVisualization({
           ]);
         });
 
-        Animated.parallel(animations).start((finished) => {
-          if (finished && isPlaying) {
+        const loopAnimation = Animated.parallel(animations);
+        activeAnimationRef.current = loopAnimation;
+        loopAnimation.start(({ finished }) => {
+          if (finished && isAnimationActiveRef.current) {
             animateBars();
           }
         });
@@ -63,6 +81,11 @@ export default function AgentVisualization({
         }).start();
       });
     }
+
+    return () => {
+      isAnimationActiveRef.current = false;
+      stopActiveAnimation();
+    };
   }, [isPlaying, barHeights]);
 
   const layoutCallback = useCallback((event: LayoutChangeEvent) => {

@@ -48,11 +48,13 @@ export interface UseWebSocketAgentReturn {
   disconnect: () => void;
   sendAudio: (audioData: ArrayBuffer) => void;
   sendText: (text: string) => void;
-  onEvent: (callback: (event: ADKEvent) => void) => void;
+  onEvent: (callback: (event: ADKEvent) => void) => () => void;
   onAudio: (
     callback: (audioData: ArrayBuffer | string, mimeType?: string) => void
-  ) => void;
-  onUIComponent: (callback: (component: GenerativeUIEvent) => void) => void;
+  ) => () => void;
+  onUIComponent: (
+    callback: (component: GenerativeUIEvent) => void
+  ) => () => void;
 }
 
 // Generative UI event type
@@ -75,6 +77,8 @@ export function useWebSocketAgent(
 
   const wsRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef<number>(0);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isManuallyDisconnectedRef = useRef(false);
   const MAX_RETRIES = 3;
   const connectOptionsRef = useRef<ConnectOptions | undefined>(undefined);
 
@@ -107,6 +111,13 @@ export function useWebSocketAgent(
     return `${wsUrl}/ws/${sessionId}`;
   }, [sessionId]);
 
+  const clearRetryTimeout = useCallback(() => {
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+  }, []);
+
   const connect = useCallback(
     (options?: ConnectOptions) => {
       if (
@@ -116,6 +127,9 @@ export function useWebSocketAgent(
         console.log('WebSocket already connected/connecting');
         return;
       }
+
+      clearRetryTimeout();
+      isManuallyDisconnectedRef.current = false;
 
       // Store options for retry attempts
       connectOptionsRef.current = options;
@@ -138,6 +152,7 @@ export function useWebSocketAgent(
 
         ws.onopen = () => {
           console.log('WebSocket connected');
+          clearRetryTimeout();
           let timezone = options?.timezone;
           if (!options?.timezone) {
             try {
@@ -154,7 +169,13 @@ export function useWebSocketAgent(
             trigger_type: options?.trigger_type,
             timezone,
           };
-          console.log('[WS-INIT] Sending init handshake:', initMessage);
+          console.log('[WS-INIT] Sending init handshake', {
+            type: 'init',
+            resume_session_id: options?.resume_session_id,
+            trigger_type: options?.trigger_type,
+            timezone,
+            has_access_token: Boolean(accessToken),
+          });
           ws.send(JSON.stringify(initMessage));
 
           setState({ isConnected: true, isConnecting: false, error: null });
@@ -172,6 +193,9 @@ export function useWebSocketAgent(
 
         ws.onerror = (event) => {
           console.error('WebSocket error:', event);
+          if (isManuallyDisconnectedRef.current) {
+            return;
+          }
 
           if (retryCountRef.current < MAX_RETRIES) {
             retryCountRef.current++;
@@ -181,7 +205,12 @@ export function useWebSocketAgent(
               }/${MAX_RETRIES}) in ${retryCountRef.current * 2}s...`
             );
 
-            setTimeout(() => {
+            clearRetryTimeout();
+            retryTimeoutRef.current = setTimeout(() => {
+              retryTimeoutRef.current = null;
+              if (isManuallyDisconnectedRef.current) {
+                return;
+              }
               connect(connectOptionsRef.current);
             }, 2000 * retryCountRef.current);
           } else {
@@ -266,10 +295,13 @@ export function useWebSocketAgent(
         });
       }
     },
-    [accessToken, getWebSocketUrl]
+    [accessToken, clearRetryTimeout, getWebSocketUrl]
   );
 
   const disconnect = useCallback(() => {
+    isManuallyDisconnectedRef.current = true;
+    retryCountRef.current = 0;
+    clearRetryTimeout();
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -280,7 +312,7 @@ export function useWebSocketAgent(
       }
       return { isConnected: false, isConnecting: false, error: null };
     });
-  }, []);
+  }, [clearRetryTimeout]);
 
   const sendAudio = useCallback((audioData: ArrayBuffer) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -296,6 +328,11 @@ export function useWebSocketAgent(
 
   const onEvent = useCallback((callback: (event: ADKEvent) => void) => {
     eventCallbackRef.current = callback;
+    return () => {
+      if (eventCallbackRef.current === callback) {
+        eventCallbackRef.current = null;
+      }
+    };
   }, []);
 
   const onAudio = useCallback(
@@ -303,6 +340,11 @@ export function useWebSocketAgent(
       callback: (audioData: ArrayBuffer | string, mimeType?: string) => void
     ) => {
       audioCallbackRef.current = callback;
+      return () => {
+        if (audioCallbackRef.current === callback) {
+          audioCallbackRef.current = null;
+        }
+      };
     },
     []
   );
@@ -310,6 +352,11 @@ export function useWebSocketAgent(
   const onUIComponent = useCallback(
     (callback: (component: GenerativeUIEvent) => void) => {
       uiComponentCallbackRef.current = callback;
+      return () => {
+        if (uiComponentCallbackRef.current === callback) {
+          uiComponentCallbackRef.current = null;
+        }
+      };
     },
     []
   );

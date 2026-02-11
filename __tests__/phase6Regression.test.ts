@@ -47,6 +47,10 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
     (global.WebSocket as any).CLOSED = 3;
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('sends init handshake with resume session + trigger type + timezone', async () => {
     const { result } = renderHook(() =>
       useWebSocketAgent('session_test', 'jwt_test')
@@ -198,6 +202,81 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
     expect(onAudio).toHaveBeenCalledTimes(1);
     const audioPayload = onAudio.mock.calls[0][0] as string;
     expect(audioPayload).toBe('AQID');
+  });
+
+  it('does not reconnect after manual disconnect when retry is pending', () => {
+    jest.useFakeTimers();
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+
+    act(() => {
+      result.current.connect();
+    });
+
+    expect(global.WebSocket).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      mockWs.onerror?.(new Event('error'));
+    });
+
+    act(() => {
+      result.current.disconnect();
+    });
+
+    act(() => {
+      jest.advanceTimersByTime(10000);
+    });
+
+    expect(global.WebSocket).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not invoke unsubscribed event listeners', () => {
+    const onEvent = jest.fn();
+    const onAudio = jest.fn();
+
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+
+    let unsubscribeEvent = () => {};
+    let unsubscribeAudio = () => {};
+    act(() => {
+      unsubscribeEvent = result.current.onEvent(onEvent);
+      unsubscribeAudio = result.current.onAudio(onAudio);
+      result.current.connect();
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+    });
+
+    act(() => {
+      unsubscribeEvent();
+      unsubscribeAudio();
+    });
+
+    act(() => {
+      mockWs.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            content: {
+              parts: [
+                { text: 'hello world' },
+                {
+                  inlineData: {
+                    mimeType: 'audio/pcm;rate=16000',
+                    data: 'AQID',
+                  },
+                },
+              ],
+            },
+            partial: false,
+          }),
+        })
+      );
+    });
+
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(onAudio).not.toHaveBeenCalled();
   });
 
   it('surfaces invalid backend URL format as a connection error', async () => {

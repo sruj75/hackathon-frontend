@@ -62,11 +62,10 @@ export function DayView({
     return focus_mode ? focus_mode.relevant_tasks : pendingTasks;
   }, [display_mode, focus_mode, pendingTasks, completedTasks]);
 
-  // Memoize current time to avoid useMemo dependency issues
-  const now = useMemo(() => new Date(), []);
+  const now = new Date();
 
   // Separate current/upcoming/past events
-  const { currentEvent, upcomingEvents, pastEvents } = useMemo(() => {
+  const { currentEvent, upcomingEvents, pastEvents } = (() => {
     const current = events.find((e) => {
       try {
         const start = new Date(e.start_time);
@@ -103,7 +102,7 @@ export function DayView({
       upcomingEvents: upcoming,
       pastEvents: past,
     };
-  }, [events, now]);
+  })();
 
   // Calculate item limits based on mode and expansion
   const itemLimits = useMemo(() => {

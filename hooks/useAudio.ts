@@ -10,7 +10,7 @@ export interface UseAudioRecordingReturn {
   isRecording: boolean;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
-  onAudioData: (callback: (data: ArrayBuffer) => void) => void;
+  onAudioData: (callback: (data: ArrayBuffer) => void) => () => void;
 }
 
 export function useAudioRecording(): UseAudioRecordingReturn {
@@ -125,6 +125,11 @@ export function useAudioRecording(): UseAudioRecordingReturn {
 
   const onAudioData = useCallback((callback: (data: ArrayBuffer) => void) => {
     audioDataCallbackRef.current = callback;
+    return () => {
+      if (audioDataCallbackRef.current === callback) {
+        audioDataCallbackRef.current = null;
+      }
+    };
   }, []);
 
   return {
