@@ -280,7 +280,9 @@ export function useAudioPlayback(): UseAudioPlaybackReturn {
             await streamPlayChunk(chunk);
           }
         } finally {
-          isDrainingPlaybackRef.current = false;
+          if (playbackDrainGenerationRef.current === drainGeneration) {
+            isDrainingPlaybackRef.current = false;
+          }
         }
       } catch (error) {
         console.error('[AUDIO] Failed to play audio:', error);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 
@@ -14,6 +14,8 @@ type AccessTokenResolver = () => Promise<string | null>;
 export function useNotifications(
   getAccessToken: AccessTokenResolver
 ): UseNotificationsResult {
+  const getAccessTokenRef = useRef(getAccessToken);
+  getAccessTokenRef.current = getAccessToken;
   const [isReady, setIsReady] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
   const [token, setToken] = useState<string | null>(null);
@@ -41,7 +43,9 @@ export function useNotifications(
           return;
         }
 
-        const accessToken = await getAccessToken();
+        setHasPermission(true);
+
+        const accessToken = await getAccessTokenRef.current();
         if (!accessToken) {
           setError('missing_access_token');
           setIsReady(true);
@@ -82,7 +86,7 @@ export function useNotifications(
     }
 
     setupNotifications();
-  }, [getAccessToken]);
+  }, []); // Run once on mount
 
   return { isReady, hasPermission, token, error };
 }

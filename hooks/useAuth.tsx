@@ -44,6 +44,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSession(data.session ?? null);
         }
       })
+      .catch((err) => {
+        console.error('Failed to get session:', err);
+      })
       .finally(() => {
         if (isMounted) {
           setIsLoading(false);
@@ -120,12 +123,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const getAccessToken = useCallback(async (): Promise<string | null> => {
-    if (session?.access_token) {
-      return session.access_token;
-    }
     const { data } = await supabase.auth.getSession();
     return data.session?.access_token ?? null;
-  }, [session]);
+  }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({

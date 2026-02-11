@@ -48,14 +48,14 @@ export default function StartScreen() {
       return;
     }
 
-    const accessToken = await getAccessToken();
-    if (!accessToken) {
-      setErrorMessage('Missing auth token');
-      setIsLoadingPrefs(false);
-      return;
-    }
-
     try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        setErrorMessage('Missing auth token');
+        setIsLoadingPrefs(false);
+        return;
+      }
+
       const response = await fetch(`${backendUrl}/api/preferences/me`, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -128,7 +128,15 @@ export default function StartScreen() {
       setConnecting(false);
       return;
     }
-    const accessToken = await getAccessToken();
+
+    let accessToken;
+    try {
+      accessToken = await getAccessToken();
+    } catch {
+      setErrorMessage('Failed to get auth token');
+      setConnecting(false);
+      return;
+    }
     if (!accessToken) {
       setErrorMessage('Missing auth token');
       setConnecting(false);
@@ -202,7 +210,13 @@ export default function StartScreen() {
       setErrorMessage('Backend URL is missing');
       return;
     }
-    const accessToken = await getAccessToken();
+    let accessToken;
+    try {
+      accessToken = await getAccessToken();
+    } catch {
+      setErrorMessage('Failed to get auth token');
+      return;
+    }
     if (!accessToken) {
       setErrorMessage('Missing auth token');
       return;
