@@ -89,6 +89,12 @@ export default function AssistantScreen() {
   const endPlaybackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const pendingTurnCompleteRef = useRef(false);
+  const streamingTextRef = useRef('');
+  const lastAgentMessageRef = useRef<{ text: string; timestamp: number } | null>(
+    null
+  );
+  const turnHasOutputTranscriptionRef = useRef(false);
 
   // Streaming state for accumulating partial responses
   const [streamingTranscription, setStreamingTranscription] = useState<{
@@ -101,6 +107,34 @@ export default function AssistantScreen() {
   const [isPendingUIRender, setIsPendingUIRender] = useState(false);
   const isMicUiEnabled =
     isMicEnabled || (wsState.isConnected && awaitingInitialGreeting);
+
+  const schedulePlaybackEnd = useCallback(() => {
+    if (endPlaybackTimerRef.current) {
+      clearTimeout(endPlaybackTimerRef.current);
+    }
+    endPlaybackTimerRef.current = setTimeout(() => {
+      void endPlayback();
+      pendingTurnCompleteRef.current = false;
+      endPlaybackTimerRef.current = null;
+    }, 220);
+  }, [endPlayback]);
+
+  const mergeStreamingText = useCallback((current: string, incoming: string) => {
+    if (!incoming) {
+      return current;
+    }
+    if (!current) {
+      return incoming;
+    }
+    // Backends differ: some send deltas (" world"), others send full partials ("hello world").
+    if (incoming.startsWith(current)) {
+      return incoming;
+    }
+    if (current.endsWith(incoming)) {
+      return current;
+    }
+    return current + incoming;
+  }, []);
 
   // Connect on mount with session resumption params if available
   useEffect(() => {
@@ -162,6 +196,9 @@ export default function AssistantScreen() {
         clearTimeout(endPlaybackTimerRef.current);
         endPlaybackTimerRef.current = null;
       }
+      pendingTurnCompleteRef.current = false;
+      streamingTextRef.current = '';
+      turnHasOutputTranscriptionRef.current = false;
       hasAutoStartedRef.current = false;
       if (isRecording && !isStoppingRecordingRef.current) {
         isStoppingRecordingRef.current = true;
@@ -178,31 +215,30 @@ export default function AssistantScreen() {
   // Set up audio data callback - stream audio chunks to WebSocket in real-time
   useEffect(() => {
     const unsubscribe = onAudioData((data) => {
-      // Software AEC: Don't send audio while agent is speaking to prevent loopback
-      if (wsState.isConnected && !isPlaying) {
-        // Log periodically to avoid spam
-        // console.log(`Streaming audio chunk: ${data.byteLength} bytes`);
+      // Full duplex for true barge-in: keep sending mic audio even while assistant is speaking.
+      // iOS voiceChat mode in expo-realtime-audio provides native echo management.
+      if (wsState.isConnected) {
         sendAudio(data);
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onAudioData, sendAudio, wsState.isConnected, isPlaying]);
+  }, [onAudioData, sendAudio, wsState.isConnected]);
 
   // Set up audio playback callback - play audio received from server
   useEffect(() => {
     const unsubscribe = onAudio((audioData, mimeType) => {
-      if (endPlaybackTimerRef.current) {
-        clearTimeout(endPlaybackTimerRef.current);
-        endPlaybackTimerRef.current = null;
-      }
       // Keep audio output active across voice/chat/ui views.
       // View mode should affect layout, not whether the user hears the assistant.
       if (wsState.isConnected) {
         playAudio(audioData, mimeType);
       }
+      // Once turnComplete is seen, keep extending the end timer as chunks arrive.
+      if (pendingTurnCompleteRef.current) {
+        schedulePlaybackEnd();
+      }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onAudio, playAudio, wsState.isConnected]);
+  }, [onAudio, playAudio, schedulePlaybackEnd, wsState.isConnected]);
 
   // Handle UI components from backend
   useEffect(() => {
@@ -214,11 +250,36 @@ export default function AssistantScreen() {
   }, [onUIComponent]);
 
   const addTranscription = useCallback((participant: string, text: string) => {
+    const normalizedText = text.trim();
+    if (!normalizedText) {
+      return;
+    }
     setTranscriptions((prev) => [
       ...prev,
-      { participant, text, timestamp: Date.now() },
+      { participant, text: normalizedText, timestamp: Date.now() },
     ]);
   }, []);
+
+  const addAgentTranscription = useCallback(
+    (text: string) => {
+      const normalizedText = text.trim();
+      if (!normalizedText) {
+        return;
+      }
+      const now = Date.now();
+      const last = lastAgentMessageRef.current;
+      if (
+        last &&
+        last.text === normalizedText &&
+        now - last.timestamp < 1500
+      ) {
+        return;
+      }
+      addTranscription('Agent', normalizedText);
+      lastAgentMessageRef.current = { text: normalizedText, timestamp: now };
+    },
+    [addTranscription]
+  );
 
   // Handle ADK events (transcriptions, responses)
   useEffect(() => {
@@ -228,12 +289,30 @@ export default function AssistantScreen() {
         console.log(
           '[CHAT] Agent interrupted, clearing streaming transcription'
         );
+        if (endPlaybackTimerRef.current) {
+          clearTimeout(endPlaybackTimerRef.current);
+          endPlaybackTimerRef.current = null;
+        }
+        pendingTurnCompleteRef.current = false;
+        streamingTextRef.current = '';
+        turnHasOutputTranscriptionRef.current = false;
         void stopPlayback();
         setStreamingTranscription(null);
       }
 
       // Handle input transcription (user speech)
       if (event.serverContent?.inputTranscription?.text) {
+        // If user starts talking, stop assistant playback immediately for barge-in UX.
+        if (isPlaying) {
+          if (endPlaybackTimerRef.current) {
+            clearTimeout(endPlaybackTimerRef.current);
+            endPlaybackTimerRef.current = null;
+          }
+          pendingTurnCompleteRef.current = false;
+          streamingTextRef.current = '';
+          setStreamingTranscription(null);
+          void stopPlayback();
+        }
         addTranscription(
           transcriptionUserId,
           event.serverContent.inputTranscription.text
@@ -246,11 +325,15 @@ export default function AssistantScreen() {
           '[CHAT] Received output transcription:',
           event.serverContent.outputTranscription.text
         );
-        addTranscription('Agent', event.serverContent.outputTranscription.text);
+        turnHasOutputTranscriptionRef.current = true;
+        addAgentTranscription(event.serverContent.outputTranscription.text);
       }
 
       // Handle text responses (Chat Mode) - with streaming support
       if (event.content?.parts) {
+        const hasAudioPart = event.content.parts.some((part) =>
+          Boolean(part.inlineData?.mimeType?.includes('audio'))
+        );
         for (const part of event.content.parts) {
           if (part.text) {
             const textContent = part.text;
@@ -263,25 +346,31 @@ export default function AssistantScreen() {
 
             if (event.partial) {
               // Accumulate partial responses
-              setStreamingTranscription((prev) => {
-                if (prev) {
-                  // Append to existing streaming text
-                  return {
-                    participant: 'Agent',
-                    text: prev.text + textContent,
-                  };
-                } else {
-                  // Start new streaming text
-                  return {
-                    participant: 'Agent',
-                    text: textContent,
-                  };
-                }
+              const mergedText = mergeStreamingText(
+                streamingTextRef.current,
+                textContent
+              );
+              streamingTextRef.current = mergedText;
+              setStreamingTranscription({
+                participant: 'Agent',
+                text: mergedText,
               });
             } else {
-              // Non-partial response - add directly AND clear streaming state
-              addTranscription('Agent', textContent);
-              setStreamingTranscription(null); // Clear to prevent duplicates
+              // Non-partial responses are shown only when tied to conversation context.
+              const finalText = mergeStreamingText(
+                streamingTextRef.current,
+                textContent
+              );
+              const hadStreamingText = streamingTextRef.current.length > 0;
+              streamingTextRef.current = '';
+              setStreamingTranscription(null);
+              const isConversationalText =
+                hasAudioPart ||
+                turnHasOutputTranscriptionRef.current ||
+                hadStreamingText;
+              if (isConversationalText && !turnHasOutputTranscriptionRef.current) {
+                addAgentTranscription(finalText);
+              }
             }
           }
         }
@@ -291,28 +380,24 @@ export default function AssistantScreen() {
       if (event.turnComplete) {
         console.log('[CHAT] Turn complete, finalizing streaming transcription');
         setAwaitingInitialGreeting(false);
-        // Debounced end avoids cutting late-arriving audio chunks.
-        if (endPlaybackTimerRef.current) {
-          clearTimeout(endPlaybackTimerRef.current);
+        pendingTurnCompleteRef.current = true;
+        schedulePlaybackEnd();
+        if (streamingTextRef.current && !turnHasOutputTranscriptionRef.current) {
+          addAgentTranscription(streamingTextRef.current);
         }
-        endPlaybackTimerRef.current = setTimeout(() => {
-          void endPlayback();
-          endPlaybackTimerRef.current = null;
-        }, 220);
-        setStreamingTranscription((prev) => {
-          if (prev && prev.text) {
-            // Move streaming text to final transcriptions
-            addTranscription(prev.participant, prev.text);
-          }
-          return null; // Clear streaming state
-        });
+        streamingTextRef.current = '';
+        turnHasOutputTranscriptionRef.current = false;
+        setStreamingTranscription(null);
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
   }, [
     onEvent,
+    addAgentTranscription,
     addTranscription,
-    endPlayback,
+    mergeStreamingText,
+    schedulePlaybackEnd,
+    isPlaying,
     stopPlayback,
     transcriptionUserId,
   ]);
@@ -338,13 +423,9 @@ export default function AssistantScreen() {
         setViewMode('voice');
       }
     } else {
-      // Stop any playing audio when switching TO chat mode
-      if (isPlaying) {
-        stopPlayback();
-      }
       setViewMode('chat');
     }
-  }, [viewMode, uiComponents.length, isPlaying, stopPlayback]);
+  }, [viewMode, uiComponents.length]);
 
   const onExitClick = useCallback(async () => {
     await stopRecording();
@@ -355,14 +436,15 @@ export default function AssistantScreen() {
 
   const onChatSend = useCallback(
     (message: string) => {
-      if (!user) {
+      const trimmedMessage = message.trim();
+      if (!user || !wsState.isConnected || !trimmedMessage) {
         return;
       }
-      addTranscription(transcriptionUserId, message);
-      sendText(message);
+      addTranscription(transcriptionUserId, trimmedMessage);
+      sendText(trimmedMessage);
       setChatMessage('');
     },
-    [sendText, addTranscription, transcriptionUserId, user]
+    [sendText, addTranscription, transcriptionUserId, user, wsState.isConnected]
   );
 
   // Render Generative UI component based on type
@@ -466,6 +548,9 @@ export default function AssistantScreen() {
               <ChatBar
                 style={styles.chatBar}
                 value={chatMessage}
+                isSendDisabled={
+                  !wsState.isConnected || chatMessage.trim().length === 0
+                }
                 onChangeText={(value) => setChatMessage(value)}
                 onChatSend={onChatSend}
               />

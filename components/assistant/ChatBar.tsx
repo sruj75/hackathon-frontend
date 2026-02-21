@@ -13,6 +13,7 @@ import {
 type ChatBarProps = {
   style: StyleProp<ViewStyle>;
   value: string;
+  isSendDisabled?: boolean;
   onChangeText: (text: string) => void;
   onChatSend: (text: string) => void;
 };
@@ -20,6 +21,7 @@ type ChatBarProps = {
 export default function ChatBar({
   style,
   value,
+  isSendDisabled = false,
   onChangeText,
   onChatSend,
 }: ChatBarProps) {
@@ -39,9 +41,14 @@ export default function ChatBar({
           multiline={true}
         />
         <TouchableOpacity
-          style={styles.button}
+          style={[styles.button, isSendDisabled && styles.disabledButton]}
           activeOpacity={0.7}
-          onPress={() => onChatSend(value)}
+          disabled={isSendDisabled}
+          onPress={() => {
+            if (!isSendDisabled) {
+              onChatSend(value);
+            }
+          }}
         >
           <View>
             <Image source={require('@/assets/images/arrow_upward_24dp.png')} />
@@ -74,5 +81,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 16, // Fixed circular radius for number type
     backgroundColor: '#666666',
+  },
+  disabledButton: {
+    opacity: 0.45,
   },
 });
