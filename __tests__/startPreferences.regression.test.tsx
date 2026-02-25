@@ -1,144 +1,95 @@
 import React from 'react';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
-const mockNavigate = jest.fn();
+const mockReplace = jest.fn();
 const mockSignIn = jest.fn();
 const mockGetAccessToken = jest.fn(async () => 'jwt_test');
+const mockRunBootstrap = jest.fn();
+const mockSetSigningIn = jest.fn();
+const mockSetError = jest.fn();
+const mockClearError = jest.fn();
+
+let mockUser: { id: string } | null = null;
+let mockAuthLoading = false;
+let mockBootstrapState = {
+  phase: 'idle',
+  progress: '',
+  error: null as string | null,
+};
 
 jest.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
-    user: { id: 'user_test' },
-    isLoading: false,
+    user: mockUser,
+    isLoading: mockAuthLoading,
     signInWithGoogle: mockSignIn,
     getAccessToken: mockGetAccessToken,
   }),
 }));
 
-jest.mock('expo-router', () => {
-  const ReactModule = require('react');
-  return {
-    useRouter: () => ({
-      navigate: mockNavigate,
-    }),
-    useFocusEffect: (effect: () => void | (() => void)) => {
-      ReactModule.useEffect(() => effect(), []);
-    },
-  };
-});
+jest.mock('@/hooks/useAuthBootstrap', () => ({
+  useAuthBootstrap: () => ({
+    state: mockBootstrapState,
+    setSigningIn: mockSetSigningIn,
+    setError: mockSetError,
+    clearError: mockClearError,
+    runBootstrap: mockRunBootstrap,
+  }),
+}));
+
+jest.mock('expo-router', () => ({
+  useRouter: () => ({
+    replace: mockReplace,
+  }),
+}));
 
 import StartScreen from '@/app/(start)/index';
 
-global.fetch = jest.fn();
-
-describe('StartScreen preference regressions', () => {
+describe('StartScreen bootstrap regressions', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.useFakeTimers();
-    process.env.EXPO_PUBLIC_BACKEND_URL = 'http://localhost:8080';
+    mockUser = null;
+    mockAuthLoading = false;
+    mockBootstrapState = {
+      phase: 'idle',
+      progress: '',
+      error: null,
+    };
+    mockRunBootstrap.mockResolvedValue(null);
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
+  it('starts Google sign-in when unauthenticated user taps primary button', async () => {
+    const { getByText } = render(<StartScreen />);
+
+    fireEvent.press(getByText('Sign In With Google'));
+
+    await waitFor(() => {
+      expect(mockSetSigningIn).toHaveBeenCalledTimes(1);
+      expect(mockSignIn).toHaveBeenCalledTimes(1);
+    });
+    expect(mockRunBootstrap).not.toHaveBeenCalled();
   });
 
-  it('blocks navigation when preference save returns partial_success', async () => {
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          status: 'ok',
-          preferences: {
-            wake_time: '07:00',
-            bedtime: '22:30',
-            timezone: 'America/New_York',
-            health_anchors: ['sleep'],
-          },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          status: 'partial_success',
-          scheduler: {
-            resynced: false,
-            error: 'cron unavailable',
-          },
-        }),
-      });
+  it('routes authenticated user to assistant when bootstrap returns assistant', async () => {
+    mockUser = { id: 'user_test' };
+    mockRunBootstrap.mockResolvedValue('assistant');
 
-    const { getByText, getByDisplayValue } = render(<StartScreen />);
+    render(<StartScreen />);
 
     await waitFor(() => {
-      expect(getByDisplayValue('07:00')).toBeTruthy();
-      expect(getByDisplayValue('22:30')).toBeTruthy();
-    });
-
-    fireEvent.press(getByText('Start Conversation'));
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledTimes(2);
-    });
-
-    const putCall = (global.fetch as jest.Mock).mock.calls[1];
-    const putBody = JSON.parse(putCall[1].body as string);
-
-    expect(putCall[0]).toBe('http://localhost:8080/api/preferences/me');
-    expect(putCall[1].headers.Authorization).toBe('Bearer jwt_test');
-    expect(putBody.wake_time).toBe('07:00');
-    expect(putBody.bedtime).toBe('22:30');
-    expect(putBody.timezone).toBeTruthy();
-    expect(putBody.health_anchors).toBeUndefined();
-
-    expect(mockNavigate).not.toHaveBeenCalled();
-
-    await waitFor(() => {
-      expect(
-        getByText(/Preferences saved, but alarm scheduling failed/i)
-      ).toBeTruthy();
+      expect(mockRunBootstrap).toHaveBeenCalled();
+      expect(mockReplace).toHaveBeenCalledWith('/assistant');
     });
   });
 
-  it('navigates only when scheduler is fully resynced', async () => {
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          status: 'ok',
-          preferences: {
-            wake_time: '08:15',
-            bedtime: '23:00',
-            timezone: 'America/New_York',
-          },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          status: 'ok',
-          scheduler: {
-            resynced: true,
-            error: null,
-          },
-        }),
-      });
+  it('routes authenticated user to onboarding placeholder when bootstrap says pending', async () => {
+    mockUser = { id: 'user_test' };
+    mockRunBootstrap.mockResolvedValue('onboarding_placeholder');
 
-    const { getByText, getByDisplayValue } = render(<StartScreen />);
+    render(<StartScreen />);
 
     await waitFor(() => {
-      expect(getByDisplayValue('08:15')).toBeTruthy();
-      expect(getByDisplayValue('23:00')).toBeTruthy();
+      expect(mockRunBootstrap).toHaveBeenCalled();
+      expect(mockReplace).toHaveBeenCalledWith('/onboarding-placeholder');
     });
-
-    fireEvent.press(getByText('Start Conversation'));
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledTimes(2);
-    });
-
-    act(() => {
-      jest.advanceTimersByTime(500);
-    });
-
-    expect(mockNavigate).toHaveBeenCalledWith('../assistant');
   });
 });

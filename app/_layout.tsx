@@ -54,7 +54,16 @@ function RootLayoutNavigator() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(start)" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="onboarding-placeholder"
+          options={{ headerShown: false }}
+        />
         <Stack.Screen name="assistant" options={{ headerShown: false }} />
+        <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="composio/callback"
+          options={{ headerShown: false }}
+        />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
