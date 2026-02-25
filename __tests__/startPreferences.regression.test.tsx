@@ -71,7 +71,10 @@ describe('StartScreen bootstrap regressions', () => {
 
   it('routes authenticated user to assistant when bootstrap returns assistant', async () => {
     mockUser = { id: 'user_test' };
-    mockRunBootstrap.mockResolvedValue('assistant');
+    mockRunBootstrap.mockResolvedValue({
+      route: 'assistant',
+      onboardingSessionId: null,
+    });
 
     render(<StartScreen />);
 
@@ -81,15 +84,24 @@ describe('StartScreen bootstrap regressions', () => {
     });
   });
 
-  it('routes authenticated user to onboarding placeholder when bootstrap says pending', async () => {
+  it('routes authenticated user to assistant onboarding mode when bootstrap says pending', async () => {
     mockUser = { id: 'user_test' };
-    mockRunBootstrap.mockResolvedValue('onboarding_placeholder');
+    mockRunBootstrap.mockResolvedValue({
+      route: 'onboarding_placeholder',
+      onboardingSessionId: 'session_onboarding_user_test',
+    });
 
     render(<StartScreen />);
 
     await waitFor(() => {
       expect(mockRunBootstrap).toHaveBeenCalled();
-      expect(mockReplace).toHaveBeenCalledWith('/onboarding-placeholder');
+      expect(mockReplace).toHaveBeenCalledWith({
+        pathname: '/assistant',
+        params: {
+          trigger_type: 'onboarding',
+          resume_session_id: 'session_onboarding_user_test',
+        },
+      });
     });
   });
 });

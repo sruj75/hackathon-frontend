@@ -26,13 +26,26 @@ export default function StartScreen() {
     useAuthBootstrap(backendUrl, getAccessToken);
 
   const runBootstrapAndRoute = useCallback(async () => {
-    const route = await runBootstrap();
-    if (route === 'assistant') {
+    const result = await runBootstrap();
+    if (!result) {
+      return;
+    }
+    if (result.route === 'assistant') {
       router.replace('/assistant');
       return;
     }
-    if (route === 'onboarding_placeholder') {
-      router.replace('/onboarding-placeholder');
+    if (result.route === 'onboarding_placeholder') {
+      const params: Record<string, string> = {
+        trigger_type: 'onboarding',
+      };
+      if (result.onboardingSessionId) {
+        params.resume_session_id = result.onboardingSessionId;
+      }
+
+      router.replace({
+        pathname: '/assistant',
+        params,
+      });
     }
   }, [router, runBootstrap]);
 

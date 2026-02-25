@@ -7,6 +7,11 @@ export type BootstrapRoute =
   | 'onboarding_placeholder'
   | 'connect_flow';
 
+export interface BootstrapResult {
+  route: BootstrapRoute;
+  onboardingSessionId: string | null;
+}
+
 export type BootstrapPhase =
   | 'idle'
   | 'signing_in'
@@ -28,6 +33,7 @@ interface BootstrapApiResponse {
   all_connected: boolean;
   onboarding_status: 'pending' | 'completed';
   route_hint: BootstrapRoute;
+  onboarding_session_id?: string;
 }
 
 interface ConnectLinkResponse {
@@ -197,7 +203,7 @@ export function useAuthBootstrap(
     [backendUrl]
   );
 
-  const runBootstrap = useCallback(async (): Promise<BootstrapRoute | null> => {
+  const runBootstrap = useCallback(async (): Promise<BootstrapResult | null> => {
     if (inFlightRef.current) {
       return null;
     }
@@ -246,7 +252,10 @@ export function useAuthBootstrap(
         throw new Error(`Unexpected route hint: ${bootstrapState.route_hint}`);
       }
 
-      return bootstrapState.route_hint;
+      return {
+        route: bootstrapState.route_hint,
+        onboardingSessionId: bootstrapState.onboarding_session_id ?? null,
+      };
     } catch (error) {
       setState({
         phase: 'error',
