@@ -1,6 +1,9 @@
 import { useCallback, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
+import * as Device from 'expo-device';
+import * as Notifications from 'expo-notifications';
+import { AudioStreamModule } from 'expo-realtime-audio';
 
 export type BootstrapRoute =
   | 'assistant'
@@ -16,6 +19,7 @@ export type BootstrapPhase =
   | 'idle'
   | 'signing_in'
   | 'connecting_tools'
+  | 'requesting_permissions'
   | 'verifying'
   | 'routing'
   | 'error';
@@ -54,6 +58,7 @@ const FRIENDLY_APP_NAMES: Record<string, string> = {
   googlecalendar: 'Google Calendar',
   googletasks: 'Google Tasks',
 };
+const EXPO_PROJECT_ID = 'c4e705ec-1671-4e31-ba01-43d1bc1234c7';
 
 function formatAppName(app: string): string {
   return FRIENDLY_APP_NAMES[app.toLowerCase()] ?? app;
@@ -81,6 +86,7 @@ export function useAuthBootstrap(
     error: null,
   });
   const inFlightRef = useRef(false);
+  const permissionsPreparedRef = useRef(false);
 
   const setSigningIn = useCallback(() => {
     setState({
@@ -203,6 +209,80 @@ export function useAuthBootstrap(
     [backendUrl]
   );
 
+  const requestRequiredPermissions = useCallback(
+    async (accessToken: string): Promise<void> => {
+      if (permissionsPreparedRef.current) {
+        return;
+      }
+
+      setState({
+        phase: 'requesting_permissions',
+        progress: 'Requesting microphone permission...',
+        error: null,
+      });
+
+      const micPermission = await AudioStreamModule.requestPermissions();
+      if (!micPermission.granted) {
+        throw new Error(
+          'Microphone permission is required. Please allow it and tap continue.'
+        );
+      }
+
+      if (Device.isDevice) {
+        try {
+          setState({
+            phase: 'requesting_permissions',
+            progress: 'Requesting notification permission...',
+            error: null,
+          });
+
+          const { status: existingStatus } =
+            await Notifications.getPermissionsAsync();
+          let finalStatus = existingStatus;
+
+          if (existingStatus !== 'granted') {
+            const { status } = await Notifications.requestPermissionsAsync();
+            finalStatus = status;
+          }
+
+          if (finalStatus === 'granted' && backendUrl) {
+            setState({
+              phase: 'requesting_permissions',
+              progress: 'Registering notifications...',
+              error: null,
+            });
+
+            const tokenData = await Notifications.getExpoPushTokenAsync({
+              projectId: EXPO_PROJECT_ID,
+            });
+            const saveTokenResponse = await fetch(`${backendUrl}/api/save-token`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({ token: tokenData.data }),
+            });
+            if (!saveTokenResponse.ok) {
+              console.warn(
+                '[BOOTSTRAP] Failed to save push token:',
+                saveTokenResponse.status
+              );
+            }
+          }
+        } catch (notificationError) {
+          console.warn(
+            '[BOOTSTRAP] Notification setup failed; continuing without push setup:',
+            notificationError
+          );
+        }
+      }
+
+      permissionsPreparedRef.current = true;
+    },
+    [backendUrl]
+  );
+
   const runBootstrap = useCallback(async (): Promise<BootstrapResult | null> => {
     if (inFlightRef.current) {
       return null;
@@ -239,6 +319,8 @@ export function useAuthBootstrap(
         );
       }
 
+      await requestRequiredPermissions(accessToken);
+
       setState({
         phase: 'routing',
         progress: 'Opening your workspace...',
@@ -266,7 +348,13 @@ export function useAuthBootstrap(
     } finally {
       inFlightRef.current = false;
     }
-  }, [backendUrl, connectMissingApps, fetchBootstrapState, getAccessToken]);
+  }, [
+    backendUrl,
+    connectMissingApps,
+    fetchBootstrapState,
+    getAccessToken,
+    requestRequiredPermissions,
+  ]);
 
   return {
     state,

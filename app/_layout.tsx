@@ -11,15 +11,11 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
-import { useNotifications } from '@/hooks/useNotifications';
 
 function RootLayoutNavigator() {
   const colorScheme = useColorScheme();
   const router = useRouter();
-  const { getAccessToken, user } = useAuth();
-
-  // Setup push notifications
-  useNotifications(getAccessToken);
+  const { user } = useAuth();
 
   // Handle notification taps (deep linking)
   useEffect(() => {

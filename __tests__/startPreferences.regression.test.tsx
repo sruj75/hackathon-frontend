@@ -69,14 +69,16 @@ describe('StartScreen bootstrap regressions', () => {
     expect(mockRunBootstrap).not.toHaveBeenCalled();
   });
 
-  it('routes authenticated user to assistant when bootstrap returns assistant', async () => {
+  it('routes authenticated user to assistant when bootstrap returns assistant after tap', async () => {
     mockUser = { id: 'user_test' };
     mockRunBootstrap.mockResolvedValue({
       route: 'assistant',
       onboardingSessionId: null,
     });
 
-    render(<StartScreen />);
+    const { getByTestId } = render(<StartScreen />);
+
+    fireEvent.press(getByTestId('start-primary-button'));
 
     await waitFor(() => {
       expect(mockRunBootstrap).toHaveBeenCalled();
@@ -84,14 +86,16 @@ describe('StartScreen bootstrap regressions', () => {
     });
   });
 
-  it('routes authenticated user to assistant onboarding mode when bootstrap says pending', async () => {
+  it('routes authenticated user to assistant onboarding mode when bootstrap says pending after tap', async () => {
     mockUser = { id: 'user_test' };
     mockRunBootstrap.mockResolvedValue({
       route: 'onboarding',
       onboardingSessionId: 'session_onboarding_user_test',
     });
 
-    render(<StartScreen />);
+    const { getByTestId } = render(<StartScreen />);
+
+    fireEvent.press(getByTestId('start-primary-button'));
 
     await waitFor(() => {
       expect(mockRunBootstrap).toHaveBeenCalled();

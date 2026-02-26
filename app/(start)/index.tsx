@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -49,13 +49,6 @@ export default function StartScreen() {
     }
   }, [router, runBootstrap]);
 
-  useEffect(() => {
-    if (isLoading || !user) {
-      return;
-    }
-    void runBootstrapAndRoute();
-  }, [isLoading, runBootstrapAndRoute, user]);
-
   const handlePrimaryPress = useCallback(async () => {
     clearError();
 
@@ -92,13 +85,13 @@ export default function StartScreen() {
       : 'Sign In With Google'
     : isBusy
     ? 'Setting Up...'
-    : 'Retry Setup';
+    : 'Continue';
 
   const progressText =
     state.progress ||
     (!user
-      ? 'Sign in once. We will connect your tools automatically.'
-      : 'Checking setup...');
+      ? 'Sign in once. We will connect tools and request permissions.'
+      : 'Tap continue to finish setup and permissions.');
 
   return (
     <View style={styles.container}>
