@@ -1,23 +1,13 @@
 # Frontend Testing Quick Guide
 
-Use `/Users/srujanu/Desktop/intentive/frontend/__tests__/README.md` as the source of truth.
+Use the following docs:
 
-## Daily Command
+1. `/Users/srujanu/Desktop/intentive/frontend/__tests__/README.md`
+2. `/Users/srujanu/Desktop/intentive/frontend/__tests__/RATE_ME.md`
+
+Core commands:
 
 ```bash
-cd frontend
 npm run ci:test -- --watchAll=false
-```
-
-## Current Baseline (February 7, 2026)
-
-- 8 suites
-- 42 tests
-- all passing
-
-## Integration Command
-
-```bash
-cd frontend
-npm run ci:test -- --watchAll=false __tests__/integration.test.ts __tests__/generative/integration.test.tsx
+npm run ci:test -- --watchAll=false --coverage
 ```

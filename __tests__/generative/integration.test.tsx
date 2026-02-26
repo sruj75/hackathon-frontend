@@ -38,13 +38,23 @@ jest.mock('expo-linear-gradient', () => ({
 }));
 
 describe('Generative UI Integration', () => {
+  let consoleLogSpy: jest.SpyInstance;
+
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.EXPO_PUBLIC_BACKEND_URL = 'http://localhost:8080';
     mockWsInstance = null;
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
   });
 
   it('renders day_view from WebSocket generative_ui events', async () => {
+    const futureStart = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const futureEnd = new Date(Date.now() + 90 * 60 * 1000).toISOString();
+
     const TestComponent = () => {
       const { onUIComponent, connect } = useWebSocketAgent(
         'session_test',
@@ -66,7 +76,7 @@ describe('Generative UI Integration', () => {
       ) : null;
     };
 
-    const { getByText, getByTestId } = render(<TestComponent />);
+    const { getByText } = render(<TestComponent />);
 
     await waitFor(() => {
       expect(mockWsInstance).not.toBeNull();
@@ -87,8 +97,8 @@ describe('Generative UI Integration', () => {
                 {
                   id: 'e1',
                   title: 'Planning',
-                  start_time: '2026-12-07T09:00:00Z', // Future date
-                  end_time: '2026-12-07T09:30:00Z',
+                  start_time: futureStart,
+                  end_time: futureEnd,
                 },
               ],
               tasks: [{ id: 't1', title: 'Write', status: 'pending' }],

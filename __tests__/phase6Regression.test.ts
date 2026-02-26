@@ -14,6 +14,8 @@ type MockWs = {
 
 describe('Phase 6 Regression - WebSocket + Generative UI', () => {
   let mockWs: MockWs;
+  let consoleLogSpy: jest.SpyInstance;
+  let consoleErrorSpy: jest.SpyInstance;
   const originalAtob = global.atob;
 
   beforeAll(() => {
@@ -30,6 +32,10 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.EXPO_PUBLIC_BACKEND_URL = 'http://localhost:8080';
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    consoleErrorSpy = jest
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
 
     mockWs = {
       send: jest.fn(),
@@ -48,6 +54,8 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
   });
 
   afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
     jest.useRealTimers();
   });
 
@@ -277,6 +285,195 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
 
     expect(onEvent).not.toHaveBeenCalled();
     expect(onAudio).not.toHaveBeenCalled();
+  });
+
+  it('does not invoke unsubscribed ui listeners', () => {
+    const onUI = jest.fn();
+
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+
+    let unsubscribeUI = () => {};
+    act(() => {
+      unsubscribeUI = result.current.onUIComponent(onUI);
+      result.current.connect();
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+      unsubscribeUI();
+    });
+
+    act(() => {
+      mockWs.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'generative_ui',
+            component: 'day_view',
+            props: { tasks: [] },
+          }),
+        })
+      );
+    });
+
+    expect(onUI).not.toHaveBeenCalled();
+  });
+
+  it('does not reconnect when connect is called while already connecting', () => {
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+
+    act(() => {
+      result.current.connect();
+      result.current.connect();
+    });
+
+    expect(global.WebSocket).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces missing access token and never opens a socket', async () => {
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', null)
+    );
+
+    act(() => {
+      result.current.connect();
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.error).toBe('Missing access token');
+    });
+
+    expect(global.WebSocket).not.toHaveBeenCalled();
+  });
+
+  it('marks state disconnected on close when not retrying', async () => {
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+
+    act(() => {
+      result.current.connect();
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.isConnected).toBe(true);
+    });
+
+    act(() => {
+      const closeEvent = Object.assign(new Event('close'), {
+        code: 1000,
+        reason: 'bye',
+      });
+      mockWs.onclose?.(closeEvent as CloseEvent);
+    });
+
+    await waitFor(() => {
+      expect(result.current.state).toEqual({
+        isConnected: false,
+        isConnecting: false,
+        error: null,
+      });
+    });
+  });
+
+  it('stops retrying after max retries and sets connection error', async () => {
+    jest.useFakeTimers();
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+
+    act(() => {
+      result.current.connect();
+    });
+
+    act(() => {
+      mockWs.onerror?.(new Event('error'));
+      jest.advanceTimersByTime(2000);
+      mockWs.onerror?.(new Event('error'));
+      jest.advanceTimersByTime(4000);
+      mockWs.onerror?.(new Event('error'));
+      jest.advanceTimersByTime(6000);
+      mockWs.onerror?.(new Event('error'));
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.error).toBe('Connection failed after 3 attempts');
+    });
+
+    expect(global.WebSocket).toHaveBeenCalled();
+  });
+
+  it('forwards ArrayBuffer messages to audio listeners', () => {
+    const onAudio = jest.fn();
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+
+    const buffer = new ArrayBuffer(8);
+
+    act(() => {
+      result.current.onAudio(onAudio);
+      result.current.connect();
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+      mockWs.onmessage?.(new MessageEvent('message', { data: buffer }));
+    });
+
+    expect(onAudio).toHaveBeenCalledWith(buffer);
+  });
+
+  it('forwards Blob messages to audio listeners', async () => {
+    const onAudio = jest.fn();
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+
+    const blob = new Blob([new Uint8Array([1, 2, 3])], {
+      type: 'application/octet-stream',
+    });
+
+    act(() => {
+      result.current.onAudio(onAudio);
+      result.current.connect();
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+      mockWs.onmessage?.(new MessageEvent('message', { data: blob }));
+    });
+
+    await waitFor(() => {
+      expect(onAudio).toHaveBeenCalledTimes(1);
+      expect(onAudio.mock.calls[0][0]).toBeInstanceOf(ArrayBuffer);
+    });
+  });
+
+  it('sendAudio and sendText only send when socket is open', () => {
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+    const rawAudio = new ArrayBuffer(4);
+
+    act(() => {
+      result.current.connect();
+      result.current.sendAudio(rawAudio);
+      result.current.sendText('before-open');
+    });
+
+    expect(mockWs.send).toHaveBeenCalledTimes(0);
+
+    act(() => {
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+      result.current.sendAudio(rawAudio);
+      result.current.sendText('after-open');
+    });
+
+    expect(mockWs.send).toHaveBeenCalledWith(rawAudio);
+    expect(mockWs.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: 'text', text: 'after-open' })
+    );
   });
 
   it('surfaces invalid backend URL format as a connection error', async () => {

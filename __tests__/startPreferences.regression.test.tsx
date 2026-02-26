@@ -108,4 +108,74 @@ describe('StartScreen bootstrap regressions', () => {
       });
     });
   });
+
+  it('does not navigate when authenticated bootstrap returns null', async () => {
+    mockUser = { id: 'user_test' };
+    mockRunBootstrap.mockResolvedValue(null);
+
+    const { getByTestId } = render(<StartScreen />);
+    fireEvent.press(getByTestId('start-primary-button'));
+
+    await waitFor(() => {
+      expect(mockRunBootstrap).toHaveBeenCalledTimes(1);
+    });
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('handles sign-in error objects and surfaces their message', async () => {
+    mockSignIn.mockRejectedValue(new Error('OAuth unavailable'));
+
+    const { getByText } = render(<StartScreen />);
+    fireEvent.press(getByText('Sign In With Google'));
+
+    await waitFor(() => {
+      expect(mockSetError).toHaveBeenCalledWith('OAuth unavailable');
+    });
+  });
+
+  it('falls back to default sign-in error message for non-error throws', async () => {
+    mockSignIn.mockRejectedValue('unexpected');
+
+    const { getByText } = render(<StartScreen />);
+    fireEvent.press(getByText('Sign In With Google'));
+
+    await waitFor(() => {
+      expect(mockSetError).toHaveBeenCalledWith('Google sign-in failed');
+    });
+  });
+
+  it('routes onboarding without session id using only onboarding trigger', async () => {
+    mockUser = { id: 'user_test' };
+    mockRunBootstrap.mockResolvedValue({
+      route: 'onboarding',
+      onboardingSessionId: null,
+    });
+
+    const { getByTestId } = render(<StartScreen />);
+    fireEvent.press(getByTestId('start-primary-button'));
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith({
+        pathname: '/assistant',
+        params: {
+          trigger_type: 'onboarding',
+        },
+      });
+    });
+  });
+
+  it('shows setup loading state and disables primary button while busy', () => {
+    mockUser = { id: 'user_test' };
+    mockBootstrapState = {
+      phase: 'verifying',
+      progress: '',
+      error: null,
+    };
+
+    const { getByText, getByTestId } = render(<StartScreen />);
+    expect(getByText('Setting Up...')).toBeTruthy();
+    expect(getByTestId('start-primary-button').props.accessibilityState.disabled).toBe(
+      true
+    );
+  });
 });

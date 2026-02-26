@@ -1,10 +1,9 @@
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { fireEvent, render } from '@testing-library/react-native';
 
 import { DayView } from '@/components/generative/DayView';
 import { CalendarEvent, Task } from '@/types/generativeUI.types';
 
-// Mock expo-linear-gradient
 jest.mock('expo-linear-gradient', () => ({
   LinearGradient: ({ children, ...props }: any) => {
     const { View } = require('react-native');
@@ -12,20 +11,36 @@ jest.mock('expo-linear-gradient', () => ({
   },
 }));
 
-describe('DayView - Apple-Minimal Generative UI', () => {
+const FROZEN_NOW = new Date('2026-02-10T12:00:00.000Z');
+
+const makeIso = (offsetMinutes: number) =>
+  new Date(FROZEN_NOW.getTime() + offsetMinutes * 60_000).toISOString();
+
+const makeEvent = (
+  id: string,
+  title: string,
+  startOffsetMinutes: number,
+  durationMinutes: number
+): CalendarEvent => ({
+  id,
+  title,
+  start_time: makeIso(startOffsetMinutes),
+  end_time: makeIso(startOffsetMinutes + durationMinutes),
+});
+
+describe('DayView - deterministic rendering', () => {
+  beforeAll(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(FROZEN_NOW);
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
   const events: CalendarEvent[] = [
-    {
-      id: 'event-1',
-      title: 'Morning Planning',
-      start_time: '2026-12-07T14:30:00Z', // Future date
-      end_time: '2026-12-07T15:00:00Z',
-    },
-    {
-      id: 'event-2',
-      title: 'Team Meeting',
-      start_time: '2026-12-07T19:30:00Z', // Future date, later in day
-      end_time: '2026-12-07T20:30:00Z',
-    },
+    makeEvent('event-1', 'Morning Planning', 90, 30),
+    makeEvent('event-2', 'Team Meeting', 240, 60),
   ];
 
   const tasks: Task[] = [
@@ -66,7 +81,6 @@ describe('DayView - Apple-Minimal Generative UI', () => {
         />
       );
 
-      // Planning mode shows 5 tasks, so should see +5 more
       expect(getByText('+5 more')).toBeTruthy();
     });
 
@@ -83,7 +97,93 @@ describe('DayView - Apple-Minimal Generative UI', () => {
         />
       );
 
-      expect(getByText('3')).toBeTruthy(); // Urgency badge
+      expect(getByText('3')).toBeTruthy();
+    });
+
+    it('shows empty state when there are no events and no tasks', () => {
+      const { getByText } = render(
+        <DayView
+          events={[]}
+          tasks={[]}
+          display_mode="planning"
+        />
+      );
+
+      expect(getByText('No events or tasks for today yet')).toBeTruthy();
+    });
+
+    it('expands events list and compresses tasks when events overflow hint is pressed', () => {
+      const manyEvents = Array.from({ length: 10 }, (_, i) =>
+        makeEvent(`event-${i}`, `Event ${i}`, (i + 1) * 20, 15)
+      );
+      const manyTasks: Task[] = [
+        { id: 't1', title: 'Task 1', status: 'pending' },
+        { id: 't2', title: 'Task 2', status: 'pending' },
+        { id: 't3', title: 'Task 3', status: 'pending' },
+      ];
+
+      const { getByText, queryByText } = render(
+        <DayView
+          events={manyEvents}
+          tasks={manyTasks}
+          display_mode="planning"
+        />
+      );
+
+      expect(getByText('Task 2')).toBeTruthy();
+      fireEvent.press(getByText('+5 more'));
+
+      expect(getByText('Event 7')).toBeTruthy();
+      expect(queryByText('Task 2')).toBeNull();
+    });
+
+    it('expands tasks list and compresses events when task overflow hint is pressed', () => {
+      const someEvents = [
+        makeEvent('e1', 'Event 1', 30, 15),
+        makeEvent('e2', 'Event 2', 60, 15),
+        makeEvent('e3', 'Event 3', 90, 15),
+      ];
+      const manyTasks = Array.from({ length: 9 }, (_, i) => ({
+        id: `task-${i}`,
+        title: `Task ${i}`,
+        status: 'pending' as const,
+      }));
+
+      const { getByText, queryByText } = render(
+        <DayView
+          events={someEvents}
+          tasks={manyTasks}
+          display_mode="planning"
+        />
+      );
+
+      expect(getByText('Event 2')).toBeTruthy();
+      fireEvent.press(getByText('+4 more'));
+
+      expect(getByText('Task 5')).toBeTruthy();
+      expect(queryByText('Event 2')).toBeNull();
+
+      fireEvent.press(getByText('+3 more'));
+      expect(queryByText('Task 5')).toBeNull();
+      expect(getByText('+4 more')).toBeTruthy();
+    });
+
+    it('shows focus mode metadata and priority label when provided', () => {
+      const { getByText } = render(
+        <DayView
+          events={events}
+          tasks={tasks}
+          display_mode="planning"
+          focus_mode={{
+            relevant_tasks: [{ id: 'focus-1', title: 'Deep Work', status: 'pending' }],
+            why_these: 'Highest leverage right now',
+          }}
+        />
+      );
+
+      expect(getByText('PRIORITIES')).toBeTruthy();
+      expect(getByText('Deep Work')).toBeTruthy();
+      expect(getByText('Highest leverage right now')).toBeTruthy();
     });
   });
 
@@ -124,34 +224,29 @@ describe('DayView - Apple-Minimal Generative UI', () => {
       );
 
       expect(getByText('FOCUS ON')).toBeTruthy();
-      // Now focus mode shows max 3 tasks
       expect(getByText('Write report')).toBeTruthy();
       expect(getByText('Review PR')).toBeTruthy();
+    });
+
+    it('shows empty state when no current block, no next event, and no tasks', () => {
+      const { getByText } = render(
+        <DayView
+          events={[]}
+          tasks={[]}
+          display_mode="now_focus"
+        />
+      );
+
+      expect(getByText('No active block or pending tasks yet')).toBeTruthy();
     });
   });
 
   describe('Transition Mode', () => {
     it('renders transition view with completed and next event', () => {
-      const pastEvent: CalendarEvent = {
-        id: 'event-past',
-        title: 'Past Meeting',
-        start_time: '2026-02-07T08:00:00Z', // Past (before today)
-        end_time: '2026-02-07T09:00:00Z',
-      };
-
+      const pastEvent: CalendarEvent = makeEvent('event-past', 'Past Meeting', -240, 60);
       const futureEvents: CalendarEvent[] = [
-        {
-          id: 'event-future-1',
-          title: 'Morning Planning',
-          start_time: '2026-12-08T14:30:00Z', // Future
-          end_time: '2026-12-08T15:00:00Z',
-        },
-        {
-          id: 'event-future-2',
-          title: 'Team Meeting',
-          start_time: '2026-12-08T19:30:00Z', // Future, later
-          end_time: '2026-12-08T20:30:00Z',
-        },
+        makeEvent('event-future-1', 'Morning Planning', 90, 30),
+        makeEvent('event-future-2', 'Team Meeting', 240, 60),
       ];
 
       const { getByText } = render(
@@ -175,7 +270,7 @@ describe('DayView - Apple-Minimal Generative UI', () => {
           tasks={[]}
           display_mode="transition"
           next_checkin={{
-            time: '2026-02-07T10:00:00Z',
+            time: makeIso(120),
             reason: 'End of work block',
           }}
         />
@@ -183,6 +278,18 @@ describe('DayView - Apple-Minimal Generative UI', () => {
 
       expect(getByText(/Next check-in:/)).toBeTruthy();
       expect(getByText(/End of work block/)).toBeTruthy();
+    });
+
+    it('shows clear state when there is no next event and no check-in', () => {
+      const { getByText } = render(
+        <DayView
+          events={[]}
+          tasks={[]}
+          display_mode="transition"
+        />
+      );
+
+      expect(getByText('All clear ahead')).toBeTruthy();
     });
   });
 
@@ -213,16 +320,33 @@ describe('DayView - Apple-Minimal Generative UI', () => {
 
       expect(getByText('No tasks completed today')).toBeTruthy();
     });
+
+    it('expands recap tasks when overflow hint is pressed', () => {
+      const completedTasks: Task[] = Array.from({ length: 12 }, (_, i) => ({
+        id: `done-${i}`,
+        title: `Done ${i}`,
+        status: 'completed',
+      }));
+
+      const { getByText } = render(
+        <DayView
+          events={events}
+          tasks={completedTasks}
+          display_mode="recap"
+        />
+      );
+
+      expect(getByText('+2 more')).toBeTruthy();
+      fireEvent.press(getByText('+2 more'));
+      expect(getByText('+6 more')).toBeTruthy();
+    });
   });
 
   describe('Real Estate Management', () => {
     it('limits items per mode to fit screen', () => {
-      const manyEvents = Array.from({ length: 10 }, (_, i) => ({
-        id: `event-${i}`,
-        title: `Event ${i}`,
-        start_time: `2027-02-07T${10 + i}:00:00Z`, // Future year
-        end_time: `2027-02-07T${11 + i}:00:00Z`,
-      }));
+      const manyEvents = Array.from({ length: 10 }, (_, i) =>
+        makeEvent(`event-${i}`, `Event ${i}`, (i + 1) * 30, 25)
+      );
 
       const { queryByText } = render(
         <DayView
@@ -232,10 +356,8 @@ describe('DayView - Apple-Minimal Generative UI', () => {
         />
       );
 
-      // Planning mode shows max 5 events
       expect(queryByText('Event 0')).toBeTruthy();
       expect(queryByText('Event 4')).toBeTruthy();
-      // Event 5 onwards should show as "+X more"
       expect(queryByText('+5 more')).toBeTruthy();
     });
 
@@ -248,7 +370,6 @@ describe('DayView - Apple-Minimal Generative UI', () => {
         />
       );
 
-      // Planning shows multiple tasks
       expect(queryPlanning('Write report')).toBeTruthy();
       expect(queryPlanning('Review PR')).toBeTruthy();
 
@@ -260,7 +381,6 @@ describe('DayView - Apple-Minimal Generative UI', () => {
         />
       );
 
-      // Transition shows no tasks section
       expect(queryTransition('Write report')).toBeNull();
     });
   });
@@ -282,8 +402,101 @@ describe('DayView - Apple-Minimal Generative UI', () => {
         />
       );
 
-      // Should render without crashing
       expect(getByText('Today')).toBeTruthy();
+    });
+
+    it('guards against Date constructor throws when parsing event timestamps', () => {
+      const RealDate = Date;
+      class ThrowingDate extends RealDate {
+        constructor(value?: string | number | Date) {
+          if (value === 'throw-date') {
+            throw new Error('date_parse_failure');
+          }
+          super(value as any);
+        }
+      }
+
+      (global as any).Date = ThrowingDate;
+      try {
+        const { getByText } = render(
+          <DayView
+            events={[
+              {
+                id: 'throwing-date-event',
+                title: 'Should be dropped',
+                start_time: 'throw-date',
+                end_time: 'throw-date',
+              },
+            ]}
+            tasks={[]}
+            display_mode="planning"
+          />
+        );
+
+        expect(getByText('No events or tasks for today yet')).toBeTruthy();
+      } finally {
+        (global as any).Date = RealDate;
+      }
+    });
+
+    it('falls back to raw timestamp when time formatting throws', () => {
+      const toLocaleTimeStringSpy = jest
+        .spyOn(Date.prototype, 'toLocaleTimeString')
+        .mockImplementation(() => {
+          throw new Error('format_failed');
+        });
+
+      const rawStart = makeIso(30);
+      const rawEnd = makeIso(60);
+
+      const { getByText } = render(
+        <DayView
+          events={[
+            {
+              id: 'event-raw-time',
+              title: 'Raw Time Event',
+              start_time: rawStart,
+              end_time: rawEnd,
+            },
+          ]}
+          tasks={[]}
+          display_mode="planning"
+        />
+      );
+
+      expect(getByText(`${rawStart} - ${rawEnd}`)).toBeTruthy();
+      toLocaleTimeStringSpy.mockRestore();
+    });
+
+    it('renders event descriptions and task metadata fields', () => {
+      const describedEvent: CalendarEvent = {
+        id: 'event-desc',
+        title: 'Described Event',
+        start_time: makeIso(30),
+        end_time: makeIso(60),
+        description: 'Important context',
+      };
+      const richTask: Task = {
+        id: 'task-rich',
+        title: 'Rich Task',
+        status: 'pending',
+        notes: 'Task notes',
+        due: '2026-02-11T09:00:00Z',
+        is_goal_linked: true,
+      };
+
+      const { getByText } = render(
+        <DayView
+          events={[describedEvent]}
+          tasks={[richTask]}
+          display_mode="planning"
+        />
+      );
+
+      expect(getByText('Important context')).toBeTruthy();
+      expect(getByText('🎯')).toBeTruthy();
+      expect(getByText('Task notes')).toBeTruthy();
+      expect(getByText('Due: 2026-02-11')).toBeTruthy();
     });
   });
 });
