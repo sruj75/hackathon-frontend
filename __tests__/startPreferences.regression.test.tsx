@@ -87,7 +87,7 @@ describe('StartScreen bootstrap regressions', () => {
   it('routes authenticated user to assistant onboarding mode when bootstrap says pending', async () => {
     mockUser = { id: 'user_test' };
     mockRunBootstrap.mockResolvedValue({
-      route: 'onboarding_placeholder',
+      route: 'onboarding',
       onboardingSessionId: 'session_onboarding_user_test',
     });
 

@@ -34,7 +34,7 @@ export default function StartScreen() {
       router.replace('/assistant');
       return;
     }
-    if (result.route === 'onboarding_placeholder') {
+    if (result.route === 'onboarding') {
       const params: Record<string, string> = {
         trigger_type: 'onboarding',
       };

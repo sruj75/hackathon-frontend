@@ -4,7 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 
 export type BootstrapRoute =
   | 'assistant'
-  | 'onboarding_placeholder'
+  | 'onboarding'
   | 'connect_flow';
 
 export interface BootstrapResult {
@@ -247,7 +247,7 @@ export function useAuthBootstrap(
 
       if (
         bootstrapState.route_hint !== 'assistant' &&
-        bootstrapState.route_hint !== 'onboarding_placeholder'
+        bootstrapState.route_hint !== 'onboarding'
       ) {
         throw new Error(`Unexpected route hint: ${bootstrapState.route_hint}`);
       }
