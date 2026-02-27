@@ -2,8 +2,8 @@
 
 Use the following docs:
 
-1. `/Users/srujanu/Desktop/intentive/frontend/__tests__/README.md`
-2. `/Users/srujanu/Desktop/intentive/frontend/__tests__/RATE_ME.md`
+1. `./README.md`
+2. `./RATE_ME.md`
 
 Core commands:
 

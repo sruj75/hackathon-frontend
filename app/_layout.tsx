@@ -30,14 +30,19 @@ function RootLayoutNavigator() {
           const triggerType =
             typeof data.trigger_type === 'string'
               ? data.trigger_type
-              : (data.type as string);
+              : typeof data.type === 'string'
+              ? data.type
+              : undefined;
           router.push({
             pathname: '/assistant',
             params: {
               resume_session_id: data.session_id as string,
               trigger_type: triggerType,
-              entry_mode: (data.entry_mode as string) || 'proactive',
-              source: (data.source as string) || 'push',
+              entry_mode:
+                typeof data.entry_mode === 'string'
+                  ? data.entry_mode
+                  : 'proactive',
+              source: typeof data.source === 'string' ? data.source : 'push',
               event_id:
                 typeof data.event_id === 'string'
                   ? (data.event_id as string)

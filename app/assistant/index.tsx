@@ -465,6 +465,7 @@ export default function AssistantScreen() {
 
       // Handle text responses (Chat Mode) - with streaming support
       if (event.content?.parts) {
+        let shouldHandoffToMain = false;
         for (const part of event.content.parts as Array<
           Record<string, unknown>
         >) {
@@ -486,8 +487,7 @@ export default function AssistantScreen() {
               (onboardingStatus === 'completed' && routeHint === 'assistant')) &&
             triggerType === 'onboarding'
           ) {
-            handoffToMainAgent();
-            return;
+            shouldHandoffToMain = true;
           }
         }
 
@@ -533,6 +533,9 @@ export default function AssistantScreen() {
               }
             }
           }
+        }
+        if (shouldHandoffToMain) {
+          handoffToMainAgent();
         }
       }
 
