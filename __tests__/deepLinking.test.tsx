@@ -99,6 +99,11 @@ describe('RootLayout deep linking', () => {
       params: {
         resume_session_id: 'session_user_test_2026-02-26',
         trigger_type: 'checkin',
+        entry_mode: 'proactive',
+        source: 'push',
+        event_id: undefined,
+        calendar_event_id: undefined,
+        scheduled_time: undefined,
       },
     });
   });

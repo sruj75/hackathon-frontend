@@ -90,8 +90,8 @@ export default function StartScreen() {
   const progressText =
     state.progress ||
     (!user
-      ? 'Sign in once. We will connect tools and request permissions.'
-      : 'Tap continue to finish setup and permissions.');
+      ? 'Sign in with Google to begin setup.'
+      : 'Continue to connect tools, grant permissions, and start onboarding.');
 
   return (
     <View style={styles.container}>

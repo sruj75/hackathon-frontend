@@ -24,6 +24,10 @@ export interface ADKEvent {
         name: string;
         args: Record<string, unknown>;
       };
+      functionResponse?: {
+        name: string;
+        response: Record<string, unknown>;
+      };
     }[];
   };
   partial?: boolean;
@@ -40,6 +44,11 @@ export interface ConnectOptions {
   resume_session_id?: string;
   trigger_type?: string;
   timezone?: string;
+  entry_mode?: 'proactive' | 'reactive' | 'post_onboarding';
+  source?: 'push' | 'manual' | 'post_onboarding';
+  event_id?: string;
+  calendar_event_id?: string;
+  scheduled_time?: string;
 }
 
 export interface UseWebSocketAgentReturn {
@@ -168,12 +177,22 @@ export function useWebSocketAgent(
             resume_session_id: options?.resume_session_id,
             trigger_type: options?.trigger_type,
             timezone,
+            entry_mode: options?.entry_mode,
+            source: options?.source,
+            event_id: options?.event_id,
+            calendar_event_id: options?.calendar_event_id,
+            scheduled_time: options?.scheduled_time,
           };
           console.log('[WS-INIT] Sending init handshake', {
             type: 'init',
             resume_session_id: options?.resume_session_id,
             trigger_type: options?.trigger_type,
             timezone,
+            entry_mode: options?.entry_mode,
+            source: options?.source,
+            event_id: options?.event_id,
+            calendar_event_id: options?.calendar_event_id,
+            scheduled_time: options?.scheduled_time,
             has_access_token: Boolean(accessToken),
           });
           ws.send(JSON.stringify(initMessage));

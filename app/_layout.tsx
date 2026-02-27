@@ -27,11 +27,29 @@ function RootLayoutNavigator() {
 
         // Navigate to assistant with session context if available
         if (data.session_id) {
+          const triggerType =
+            typeof data.trigger_type === 'string'
+              ? data.trigger_type
+              : (data.type as string);
           router.push({
             pathname: '/assistant',
             params: {
               resume_session_id: data.session_id as string,
-              trigger_type: data.type as string,
+              trigger_type: triggerType,
+              entry_mode: (data.entry_mode as string) || 'proactive',
+              source: (data.source as string) || 'push',
+              event_id:
+                typeof data.event_id === 'string'
+                  ? (data.event_id as string)
+                  : undefined,
+              calendar_event_id:
+                typeof data.calendar_event_id === 'string'
+                  ? (data.calendar_event_id as string)
+                  : undefined,
+              scheduled_time:
+                typeof data.scheduled_time === 'string'
+                  ? (data.scheduled_time as string)
+                  : undefined,
             },
           });
         } else {

@@ -323,7 +323,7 @@ export function useAuthBootstrap(
 
       setState({
         phase: 'routing',
-        progress: 'Opening your workspace...',
+        progress: 'Opening your onboarding or workspace...',
         error: null,
       });
 

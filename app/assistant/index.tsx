@@ -7,7 +7,7 @@ import {
   Text,
 } from 'react-native';
 
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import ControlBar from '../../components/assistant/ControlBar';
@@ -45,22 +45,83 @@ export default function AssistantScreen() {
   const triggerType = Array.isArray(params.trigger_type)
     ? params.trigger_type[0]
     : params.trigger_type;
+  const entryModeParam = Array.isArray(params.entry_mode)
+    ? params.entry_mode[0]
+    : params.entry_mode;
+  const sourceParam = Array.isArray(params.source) ? params.source[0] : params.source;
+  const eventIdParam = Array.isArray(params.event_id)
+    ? params.event_id[0]
+    : params.event_id;
+  const calendarEventIdParam = Array.isArray(params.calendar_event_id)
+    ? params.calendar_event_id[0]
+    : params.calendar_event_id;
+  const scheduledTimeParam = Array.isArray(params.scheduled_time)
+    ? params.scheduled_time[0]
+    : params.scheduled_time;
+
+  const inferredEntryMode =
+    typeof entryModeParam === 'string' && entryModeParam
+      ? entryModeParam
+      : resumeSessionId || triggerType
+      ? 'proactive'
+      : 'reactive';
+
+  const isStaleNotificationEntry = useMemo(() => {
+    if (
+      inferredEntryMode !== 'proactive' ||
+      typeof scheduledTimeParam !== 'string' ||
+      !scheduledTimeParam
+    ) {
+      return false;
+    }
+    const scheduled = new Date(scheduledTimeParam);
+    if (Number.isNaN(scheduled.getTime())) {
+      return false;
+    }
+    const today = new Date();
+    const localDay = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+        d.getDate()
+      ).padStart(2, '0')}`;
+    return localDay(scheduled) !== localDay(today);
+  }, [inferredEntryMode, scheduledTimeParam]);
 
   // Get session ID from route params (deep link) or generate new one
   const generatedSessionIdRef = useRef(`session-${Date.now()}`);
-  const sessionId = resumeSessionId || generatedSessionIdRef.current;
+  const effectiveResumeSessionId = isStaleNotificationEntry
+    ? undefined
+    : resumeSessionId;
+  const sessionId = effectiveResumeSessionId || generatedSessionIdRef.current;
 
   // Log deep link context if available
   useEffect(() => {
-    if (resumeSessionId) {
+    if (effectiveResumeSessionId || triggerType || eventIdParam) {
       console.log(
-        '[AssistantScreen] Resuming session from notification:',
-        resumeSessionId,
+        '[AssistantScreen] Entry context:',
+        {
+          resume_session_id: effectiveResumeSessionId,
+          trigger_type: triggerType,
+          entry_mode: inferredEntryMode,
+          source: sourceParam,
+          event_id: eventIdParam,
+          calendar_event_id: calendarEventIdParam,
+          scheduled_time: scheduledTimeParam,
+          stale: isStaleNotificationEntry,
+        },
         'type:',
         triggerType
       );
     }
-  }, [resumeSessionId, triggerType]);
+  }, [
+    effectiveResumeSessionId,
+    triggerType,
+    inferredEntryMode,
+    sourceParam,
+    eventIdParam,
+    calendarEventIdParam,
+    scheduledTimeParam,
+    isStaleNotificationEntry,
+  ]);
 
   // WebSocket connection
   const {
@@ -95,6 +156,8 @@ export default function AssistantScreen() {
     null
   );
   const turnHasOutputTranscriptionRef = useRef(false);
+  const hasPostOnboardingHandoffRef = useRef(false);
+  const pendingPostOnboardingReconnectRef = useRef(false);
 
   // Streaming state for accumulating partial responses
   const [streamingTranscription, setStreamingTranscription] = useState<{
@@ -107,6 +170,12 @@ export default function AssistantScreen() {
   const [isPendingUIRender, setIsPendingUIRender] = useState(false);
   const isMicUiEnabled =
     isMicEnabled || (wsState.isConnected && awaitingInitialGreeting);
+
+  useEffect(() => {
+    return () => {
+      pendingPostOnboardingReconnectRef.current = false;
+    };
+  }, []);
 
   const schedulePlaybackEnd = useCallback(() => {
     if (endPlaybackTimerRef.current) {
@@ -136,6 +205,29 @@ export default function AssistantScreen() {
     return current + incoming;
   }, []);
 
+  const handoffToMainAgent = useCallback(() => {
+    if (hasPostOnboardingHandoffRef.current) {
+      return;
+    }
+    hasPostOnboardingHandoffRef.current = true;
+
+    if (endPlaybackTimerRef.current) {
+      clearTimeout(endPlaybackTimerRef.current);
+      endPlaybackTimerRef.current = null;
+    }
+    pendingTurnCompleteRef.current = false;
+    streamingTextRef.current = '';
+    turnHasOutputTranscriptionRef.current = false;
+
+    setStreamingTranscription(null);
+    setTranscriptions([]);
+    setViewMode('voice');
+    setAwaitingInitialGreeting(true);
+
+    pendingPostOnboardingReconnectRef.current = true;
+    disconnect();
+  }, [disconnect]);
+
   // Connect on mount with session resumption params if available
   useEffect(() => {
     if (!session?.access_token) {
@@ -143,10 +235,29 @@ export default function AssistantScreen() {
       return;
     }
     const connectOptions =
-      resumeSessionId || triggerType
+      effectiveResumeSessionId ||
+      triggerType ||
+      eventIdParam ||
+      inferredEntryMode !== 'reactive'
         ? {
-            resume_session_id: resumeSessionId as string,
+            resume_session_id: effectiveResumeSessionId as string,
             trigger_type: triggerType as string,
+            entry_mode: isStaleNotificationEntry
+              ? 'reactive'
+              : (inferredEntryMode as 'proactive' | 'reactive' | 'post_onboarding'),
+            source: isStaleNotificationEntry
+              ? 'manual'
+              : ((sourceParam as 'push' | 'manual' | 'post_onboarding') ||
+                'manual'),
+            event_id: isStaleNotificationEntry
+              ? undefined
+              : (eventIdParam as string),
+            calendar_event_id: isStaleNotificationEntry
+              ? undefined
+              : (calendarEventIdParam as string),
+            scheduled_time: isStaleNotificationEntry
+              ? undefined
+              : (scheduledTimeParam as string),
           }
         : undefined;
 
@@ -158,9 +269,32 @@ export default function AssistantScreen() {
     connect,
     disconnect,
     resumeSessionId,
+    effectiveResumeSessionId,
     session?.access_token,
     triggerType,
+    inferredEntryMode,
+    sourceParam,
+    eventIdParam,
+    calendarEventIdParam,
+    scheduledTimeParam,
+    isStaleNotificationEntry,
   ]);
+
+  // Event-driven post-onboarding reconnect: reconnect only after disconnect settles.
+  useEffect(() => {
+    if (!pendingPostOnboardingReconnectRef.current) {
+      return;
+    }
+    if (wsState.isConnected || wsState.isConnecting) {
+      return;
+    }
+    pendingPostOnboardingReconnectRef.current = false;
+    connect({
+      trigger_type: 'post_onboarding',
+      entry_mode: 'post_onboarding',
+      source: 'post_onboarding',
+    });
+  }, [connect, wsState.isConnected, wsState.isConnecting]);
 
   // Auto-start recording when WebSocket connects for real-time streaming
   const hasAutoStartedRef = React.useRef(false);
@@ -331,6 +465,32 @@ export default function AssistantScreen() {
 
       // Handle text responses (Chat Mode) - with streaming support
       if (event.content?.parts) {
+        for (const part of event.content.parts as Array<
+          Record<string, unknown>
+        >) {
+          const functionResponse = part.functionResponse as
+            | {
+                name?: string;
+                response?: Record<string, unknown>;
+              }
+            | undefined;
+          if (functionResponse?.name !== 'complete_onboarding') {
+            continue;
+          }
+          const response = functionResponse.response || {};
+          const onboardingStatus = response.onboarding_status;
+          const routeHint = response.route_hint;
+          const handoffToMain = Boolean(response.handoff_to_main);
+          if (
+            (handoffToMain ||
+              (onboardingStatus === 'completed' && routeHint === 'assistant')) &&
+            triggerType === 'onboarding'
+          ) {
+            handoffToMainAgent();
+            return;
+          }
+        }
+
         const hasAudioPart = event.content.parts.some((part) =>
           Boolean(part.inlineData?.mimeType?.includes('audio'))
         );
@@ -400,6 +560,8 @@ export default function AssistantScreen() {
     isPlaying,
     stopPlayback,
     transcriptionUserId,
+    handoffToMainAgent,
+    triggerType,
   ]);
 
   // Control callbacks
@@ -428,6 +590,7 @@ export default function AssistantScreen() {
   }, [viewMode, uiComponents.length]);
 
   const onExitClick = useCallback(async () => {
+    pendingPostOnboardingReconnectRef.current = false;
     await stopRecording();
     disconnect();
     await stopPlayback();
