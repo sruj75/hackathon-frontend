@@ -1,0 +1,14 @@
+name: Preview OTA Update
+
+on:
+  push:
+    branches: ['v0']
+
+jobs:
+  publish_preview_update:
+    name: Publish OTA to Preview
+    type: update
+    params:
+      channel: preview
+      message: 'Auto OTA from branch v0'
+    environment: preview

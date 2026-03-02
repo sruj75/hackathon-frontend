@@ -4,13 +4,16 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabasePublishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
+export const isSupabaseConfigured = Boolean(
+  supabaseUrl && supabasePublishableKey
+);
+
 if (!supabaseUrl || !supabasePublishableKey) {
   const message =
     '[supabase] Missing EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY';
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(message);
-  }
-  console.warn(`${message}; using placeholder values for development.`);
+  console.error(
+    `${message}; app will run in limited mode until configuration is fixed.`
+  );
 }
 
 export const supabase = createClient(

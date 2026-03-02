@@ -10,6 +10,7 @@ import { useRouter } from 'expo-router';
 
 import { useAuth } from '@/hooks/useAuth';
 import { useAuthBootstrap } from '@/hooks/useAuthBootstrap';
+import { isSupabaseConfigured } from '@/lib/supabase';
 
 function normalizeErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -21,6 +22,11 @@ function normalizeErrorMessage(error: unknown): string {
 export default function StartScreen() {
   const router = useRouter();
   const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+  const isBackendConfigured = Boolean(backendUrl);
+  const configurationError =
+    !isSupabaseConfigured || !isBackendConfigured
+      ? 'App configuration is missing in this build. Please contact support.'
+      : null;
   const { user, isLoading, signInWithGoogle, getAccessToken } = useAuth();
   const { state, setSigningIn, setError, clearError, runBootstrap } =
     useAuthBootstrap(backendUrl, getAccessToken);
@@ -74,6 +80,7 @@ export default function StartScreen() {
 
   const isBusy =
     isLoading ||
+    Boolean(configurationError) ||
     state.phase === 'signing_in' ||
     state.phase === 'connecting_tools' ||
     state.phase === 'verifying' ||
@@ -88,6 +95,7 @@ export default function StartScreen() {
     : 'Continue';
 
   const progressText =
+    configurationError ||
     state.progress ||
     (!user
       ? 'Sign in with Google to begin setup.'
@@ -106,14 +114,20 @@ export default function StartScreen() {
         testID="start-primary-button"
       >
         {isBusy ? (
-          <ActivityIndicator size="small" color="#ffffff" style={styles.spinner} />
+          <ActivityIndicator
+            size="small"
+            color="#ffffff"
+            style={styles.spinner}
+          />
         ) : null}
         <Text style={styles.buttonText}>{buttonText}</Text>
       </TouchableOpacity>
 
       <Text style={styles.progressText}>{progressText}</Text>
 
-      {state.error ? <Text style={styles.errorText}>{state.error}</Text> : null}
+      {state.error && !configurationError ? (
+        <Text style={styles.errorText}>{state.error}</Text>
+      ) : null}
     </View>
   );
 }
