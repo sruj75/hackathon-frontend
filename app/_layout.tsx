@@ -21,7 +21,11 @@ function RootLayoutNavigator() {
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(
       (response) => {
-        const data = response.notification.request.content.data;
+        const payload = response.notification.request.content.data;
+        const data =
+          payload && typeof payload === 'object'
+            ? (payload as Record<string, unknown>)
+            : {};
 
         console.log('[RootLayout] Notification tapped with data:', data);
 

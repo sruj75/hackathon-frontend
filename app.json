@@ -5,13 +5,12 @@
     "owner": "srujxx",
     "version": "1.0.0",
     "runtimeVersion": {
-      "policy": "fingerprint"
+      "policy": "sdkVersion"
     },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "intentive",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bitcode": false,
@@ -24,7 +23,10 @@
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         },
-        "UIBackgroundModes": ["audio", "remote-notification"]
+        "UIBackgroundModes": [
+          "audio",
+          "remote-notification"
+        ]
       }
     },
     "android": {
@@ -67,7 +69,8 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
