@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -30,48 +30,94 @@ export default function StartScreen() {
   const { user, isLoading, signInWithGoogle, getAccessToken } = useAuth();
   const { state, setSigningIn, setError, clearError, runBootstrap } =
     useAuthBootstrap(backendUrl, getAccessToken);
+  const [readyRoute, setReadyRoute] = useState<'assistant' | 'onboarding' | null>(
+    null
+  );
+  const [readyParams, setReadyParams] = useState<Record<string, string> | null>(
+    null
+  );
 
-  const runBootstrapAndRoute = useCallback(async () => {
+  useEffect(() => {
+    if (!user) {
+      setReadyRoute(null);
+      setReadyParams(null);
+    }
+  }, [user]);
+
+  const runBootstrapSetup = useCallback(async () => {
+    const startedAt = Date.now();
+    console.log('[BOOTSTRAP_FLOW] setup_start');
     const result = await runBootstrap();
     if (!result) {
+      console.warn('[BOOTSTRAP_FLOW] setup_fail');
+      setReadyRoute(null);
+      setReadyParams(null);
       return;
     }
-    if (result.route === 'assistant') {
+    const nextParams =
+      result.route === 'onboarding'
+        ? {
+            trigger_type: 'onboarding',
+            ...(result.onboardingSessionId
+              ? { resume_session_id: result.onboardingSessionId }
+              : {}),
+          }
+        : null;
+    setReadyRoute(result.route);
+    setReadyParams(nextParams);
+    console.log(
+      `[BOOTSTRAP_FLOW] setup_success route=${result.route} duration_ms=${
+        Date.now() - startedAt
+      }`
+    );
+  }, [runBootstrap]);
+
+  const handleStartAgentPress = useCallback(() => {
+    if (!readyRoute) {
+      return;
+    }
+    if (readyRoute === 'assistant') {
       router.replace('/assistant');
       return;
     }
-    if (result.route === 'onboarding') {
-      const params: Record<string, string> = {
-        trigger_type: 'onboarding',
-      };
-      if (result.onboardingSessionId) {
-        params.resume_session_id = result.onboardingSessionId;
-      }
-
+    if (readyRoute === 'onboarding') {
       router.replace({
         pathname: '/assistant',
-        params,
+        params: readyParams ?? { trigger_type: 'onboarding' },
       });
     }
-  }, [router, runBootstrap]);
+  }, [readyParams, readyRoute, router]);
 
   const handlePrimaryPress = useCallback(async () => {
+    if (readyRoute) {
+      return;
+    }
     clearError();
 
     if (!user) {
+      const signInStartedAt = Date.now();
       setSigningIn();
+      console.log('[AUTH_FLOW] sign_in_start');
       try {
         await signInWithGoogle();
+        console.log(
+          `[AUTH_FLOW] sign_in_success duration_ms=${Date.now() - signInStartedAt}`
+        );
+        await runBootstrapSetup();
       } catch (error) {
+        console.error('[AUTH_FLOW] sign_in_fail', error);
+        setReadyRoute(null);
+        setReadyParams(null);
         setError(normalizeErrorMessage(error));
       }
       return;
     }
 
-    await runBootstrapAndRoute();
+    await runBootstrapSetup();
   }, [
     clearError,
-    runBootstrapAndRoute,
+    readyRoute,
+    runBootstrapSetup,
     setError,
     setSigningIn,
     signInWithGoogle,
@@ -83,20 +129,27 @@ export default function StartScreen() {
     Boolean(configurationError) ||
     state.phase === 'signing_in' ||
     state.phase === 'connecting_tools' ||
+    state.phase === 'requesting_permissions' ||
     state.phase === 'verifying' ||
     state.phase === 'routing';
 
+  const setupReady = Boolean(readyRoute);
   const buttonText = !user
     ? state.phase === 'signing_in'
       ? 'Signing In...'
       : 'Sign In With Google'
     : isBusy
     ? 'Setting Up...'
+    : setupReady
+    ? 'Setup Complete'
     : 'Continue';
 
   const progressText =
     configurationError ||
     state.progress ||
+    (setupReady
+      ? 'Setup complete. Tap below to start onboarding.'
+      : null) ||
     (!user
       ? 'Sign in with Google to begin setup.'
       : 'Continue to connect tools, grant permissions, and start onboarding.');
@@ -110,7 +163,7 @@ export default function StartScreen() {
         onPress={handlePrimaryPress}
         style={styles.button}
         activeOpacity={0.7}
-        disabled={isBusy}
+        disabled={isBusy || setupReady}
         testID="start-primary-button"
       >
         {isBusy ? (
@@ -122,6 +175,20 @@ export default function StartScreen() {
         ) : null}
         <Text style={styles.buttonText}>{buttonText}</Text>
       </TouchableOpacity>
+
+      {setupReady ? (
+        <TouchableOpacity
+          onPress={handleStartAgentPress}
+          style={styles.secondaryButton}
+          activeOpacity={0.7}
+          disabled={isBusy}
+          testID="start-agent-button"
+        >
+          <Text style={styles.secondaryButtonText}>
+            {readyRoute === 'assistant' ? 'Open assistant' : 'Start onboarding agent'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
 
       <Text style={styles.progressText}>{progressText}</Text>
 
@@ -160,6 +227,21 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     paddingHorizontal: 16,
     paddingVertical: 12,
+  },
+  secondaryButton: {
+    minWidth: 230,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderColor: '#3A4868',
+    borderWidth: 1,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginTop: 12,
+  },
+  secondaryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   spinner: {
     marginRight: 8,

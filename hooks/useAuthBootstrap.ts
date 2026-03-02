@@ -11,7 +11,7 @@ export type BootstrapRoute =
   | 'connect_flow';
 
 export interface BootstrapResult {
-  route: BootstrapRoute;
+  route: Exclude<BootstrapRoute, 'connect_flow'>;
   onboardingSessionId: string | null;
 }
 
@@ -59,6 +59,7 @@ const FRIENDLY_APP_NAMES: Record<string, string> = {
   googletasks: 'Google Tasks',
 };
 const EXPO_PROJECT_ID = 'c4e705ec-1671-4e31-ba01-43d1bc1234c7';
+const REQUEST_TIMEOUT_MS = 20000;
 
 function formatAppName(app: string): string {
   return FRIENDLY_APP_NAMES[app.toLowerCase()] ?? app;
@@ -67,6 +68,28 @@ function formatAppName(app: string): string {
 async function readResponseError(response: Response): Promise<string> {
   const bodyText = await response.text().catch(() => '');
   return bodyText || `Request failed with status ${response.status}`;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMessage: string
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(timeoutMessage);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function normalizeErrorMessage(error: unknown): string {
@@ -113,22 +136,36 @@ export function useAuthBootstrap(
       if (!backendUrl) {
         throw new Error('Backend URL is missing');
       }
+      const verifyStartedAt = Date.now();
+      console.log('[BOOTSTRAP_FLOW] verify_start');
       setState({
         phase: 'verifying',
         progress: 'Checking your account setup...',
         error: null,
       });
 
-      const response = await fetch(`${backendUrl}/api/onboarding/bootstrap`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-      if (!response.ok) {
-        throw new Error(await readResponseError(response));
+      try {
+        const response = await fetchWithTimeout(
+          `${backendUrl}/api/onboarding/bootstrap`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+          'Timed out while checking your account setup. Please tap retry.'
+        );
+        if (!response.ok) {
+          throw new Error(await readResponseError(response));
+        }
+        console.log(
+          `[BOOTSTRAP_FLOW] verify_success duration_ms=${Date.now() - verifyStartedAt}`
+        );
+        return (await response.json()) as BootstrapApiResponse;
+      } catch (error) {
+        console.error('[BOOTSTRAP_FLOW] verify_fail', error);
+        throw error;
       }
-      return (await response.json()) as BootstrapApiResponse;
     },
     [backendUrl]
   );
@@ -139,6 +176,10 @@ export function useAuthBootstrap(
         throw new Error('Backend URL is missing');
       }
 
+      const connectStartedAt = Date.now();
+      console.log(
+        `[BOOTSTRAP_FLOW] connect_start apps=${apps.map((app) => app.toLowerCase()).join(',')}`
+      );
       const callbackUrl = Linking.createURL('composio/callback');
       setState({
         phase: 'connecting_tools',
@@ -146,64 +187,73 @@ export function useAuthBootstrap(
         error: null,
       });
 
-      const connectLinkResponse = await fetch(
-        `${backendUrl}/api/integrations/composio/connect-link`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
+      try {
+        const connectLinkResponse = await fetchWithTimeout(
+          `${backendUrl}/api/integrations/composio/connect-link`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ redirect_url: callbackUrl }),
           },
-          body: JSON.stringify({ redirect_url: callbackUrl }),
-        }
-      );
+          'Timed out while preparing app connections. Please tap retry.'
+        );
 
-      if (!connectLinkResponse.ok) {
-        throw new Error(await readResponseError(connectLinkResponse));
-      }
-
-      const connectBody =
-        (await connectLinkResponse.json()) as ConnectLinkResponse;
-      const linksByApp = new Map(
-        (connectBody.links ?? []).map((item) => [
-          item.app.toLowerCase(),
-          item.redirect_url,
-        ])
-      );
-
-      for (const app of apps) {
-        const appName = formatAppName(app);
-        const redirectUrl = linksByApp.get(app.toLowerCase());
-        if (!redirectUrl) {
-          throw new Error(`No OAuth link returned for ${appName}`);
+        if (!connectLinkResponse.ok) {
+          throw new Error(await readResponseError(connectLinkResponse));
         }
 
-        setState({
-          phase: 'connecting_tools',
-          progress: `Authorize ${appName}...`,
-          error: null,
-        });
+        const connectBody =
+          (await connectLinkResponse.json()) as ConnectLinkResponse;
+        const linksByApp = new Map(
+          (connectBody.links ?? []).map((item) => [
+            item.app.toLowerCase(),
+            item.redirect_url,
+          ])
+        );
 
-        let authResult:
-          | Awaited<ReturnType<typeof WebBrowser.openAuthSessionAsync>>
-          | undefined;
-        try {
-          authResult = await WebBrowser.openAuthSessionAsync(
-            redirectUrl,
-            callbackUrl
-          );
-        } catch {
-          await Linking.openURL(redirectUrl);
-          throw new Error(
-            `Opened ${appName} in an external browser. Complete it there, return to the app, then tap retry.`
-          );
-        }
+        for (const app of apps) {
+          const appName = formatAppName(app);
+          const redirectUrl = linksByApp.get(app.toLowerCase());
+          if (!redirectUrl) {
+            throw new Error(`No OAuth link returned for ${appName}`);
+          }
 
-        if (authResult.type !== 'success') {
-          throw new Error(
-            `${appName} connection was cancelled. Tap retry to continue.`
-          );
+          setState({
+            phase: 'connecting_tools',
+            progress: `Authorize ${appName}...`,
+            error: null,
+          });
+
+          let authResult:
+            | Awaited<ReturnType<typeof WebBrowser.openAuthSessionAsync>>
+            | undefined;
+          try {
+            authResult = await WebBrowser.openAuthSessionAsync(
+              redirectUrl,
+              callbackUrl
+            );
+          } catch {
+            await Linking.openURL(redirectUrl);
+            throw new Error(
+              `Opened ${appName} in an external browser. Complete it there, return to the app, then tap retry.`
+            );
+          }
+
+          if (authResult.type !== 'success') {
+            throw new Error(
+              `${appName} connection was cancelled. Tap retry to continue.`
+            );
+          }
         }
+        console.log(
+          `[BOOTSTRAP_FLOW] connect_success duration_ms=${Date.now() - connectStartedAt}`
+        );
+      } catch (error) {
+        console.error('[BOOTSTRAP_FLOW] connect_fail', error);
+        throw error;
       }
     },
     [backendUrl]
@@ -214,6 +264,8 @@ export function useAuthBootstrap(
       if (permissionsPreparedRef.current) {
         return;
       }
+      const permissionsStartedAt = Date.now();
+      console.log('[BOOTSTRAP_FLOW] permissions_start');
 
       setState({
         phase: 'requesting_permissions',
@@ -223,6 +275,7 @@ export function useAuthBootstrap(
 
       const micPermission = await AudioStreamModule.requestPermissions();
       if (!micPermission.granted) {
+        console.error('[BOOTSTRAP_FLOW] permissions_fail microphone_denied');
         throw new Error(
           'Microphone permission is required. Please allow it and tap continue.'
         );
@@ -245,6 +298,13 @@ export function useAuthBootstrap(
             finalStatus = status;
           }
 
+          if (finalStatus !== 'granted') {
+            console.error('[BOOTSTRAP_FLOW] permissions_fail notifications_denied');
+            throw new Error(
+              'Notification permission is required. Please allow it and tap continue.'
+            );
+          }
+
           if (finalStatus === 'granted' && backendUrl) {
             setState({
               phase: 'requesting_permissions',
@@ -255,30 +315,37 @@ export function useAuthBootstrap(
             const tokenData = await Notifications.getExpoPushTokenAsync({
               projectId: EXPO_PROJECT_ID,
             });
-            const saveTokenResponse = await fetch(`${backendUrl}/api/save-token`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${accessToken}`,
+            const saveTokenResponse = await fetchWithTimeout(
+              `${backendUrl}/api/save-token`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({ token: tokenData.data }),
               },
-              body: JSON.stringify({ token: tokenData.data }),
-            });
+              'Timed out while registering notifications. Please tap retry.'
+            );
             if (!saveTokenResponse.ok) {
               console.warn(
-                '[BOOTSTRAP] Failed to save push token:',
+                '[BOOTSTRAP_FLOW] permissions_warn push_token_save_failed status=',
                 saveTokenResponse.status
               );
             }
           }
         } catch (notificationError) {
-          console.warn(
-            '[BOOTSTRAP] Notification setup failed; continuing without push setup:',
-            notificationError
-          );
+          console.error('[BOOTSTRAP_FLOW] permissions_fail', notificationError);
+          throw notificationError;
         }
       }
 
       permissionsPreparedRef.current = true;
+      console.log(
+        `[BOOTSTRAP_FLOW] permissions_success duration_ms=${
+          Date.now() - permissionsStartedAt
+        }`
+      );
     },
     [backendUrl]
   );
@@ -288,6 +355,7 @@ export function useAuthBootstrap(
       return null;
     }
 
+    const runStartedAt = Date.now();
     inFlightRef.current = true;
     try {
       if (!backendUrl) {
@@ -323,7 +391,7 @@ export function useAuthBootstrap(
 
       setState({
         phase: 'routing',
-        progress: 'Opening your onboarding or workspace...',
+        progress: 'Setup complete. Ready to start onboarding.',
         error: null,
       });
 
@@ -334,11 +402,18 @@ export function useAuthBootstrap(
         throw new Error(`Unexpected route hint: ${bootstrapState.route_hint}`);
       }
 
-      return {
+      const result = {
         route: bootstrapState.route_hint,
         onboardingSessionId: bootstrapState.onboarding_session_id ?? null,
       };
+      console.log(
+        `[BOOTSTRAP_FLOW] success route=${result.route} duration_ms=${
+          Date.now() - runStartedAt
+        }`
+      );
+      return result;
     } catch (error) {
+      console.error('[BOOTSTRAP_FLOW] fail', error);
       setState({
         phase: 'error',
         progress: '',

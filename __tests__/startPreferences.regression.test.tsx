@@ -42,11 +42,16 @@ jest.mock('expo-router', () => ({
   }),
 }));
 
+jest.mock('@/lib/supabase', () => ({
+  isSupabaseConfigured: true,
+}));
+
 import StartScreen from '@/app/(start)/index';
 
 describe('StartScreen bootstrap regressions', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.EXPO_PUBLIC_BACKEND_URL = 'http://localhost:8080';
     mockUser = null;
     mockAuthLoading = false;
     mockBootstrapState = {
@@ -65,28 +70,11 @@ describe('StartScreen bootstrap regressions', () => {
     await waitFor(() => {
       expect(mockSetSigningIn).toHaveBeenCalledTimes(1);
       expect(mockSignIn).toHaveBeenCalledTimes(1);
-    });
-    expect(mockRunBootstrap).not.toHaveBeenCalled();
-  });
-
-  it('routes authenticated user to assistant when bootstrap returns assistant after tap', async () => {
-    mockUser = { id: 'user_test' };
-    mockRunBootstrap.mockResolvedValue({
-      route: 'assistant',
-      onboardingSessionId: null,
-    });
-
-    const { getByTestId } = render(<StartScreen />);
-
-    fireEvent.press(getByTestId('start-primary-button'));
-
-    await waitFor(() => {
-      expect(mockRunBootstrap).toHaveBeenCalled();
-      expect(mockReplace).toHaveBeenCalledWith('/assistant');
+      expect(mockRunBootstrap).toHaveBeenCalledTimes(1);
     });
   });
 
-  it('routes authenticated user to assistant onboarding mode when bootstrap says pending after tap', async () => {
+  it('shows second button for onboarding after setup instead of auto-routing', async () => {
     mockUser = { id: 'user_test' };
     mockRunBootstrap.mockResolvedValue({
       route: 'onboarding',
@@ -99,6 +87,29 @@ describe('StartScreen bootstrap regressions', () => {
 
     await waitFor(() => {
       expect(mockRunBootstrap).toHaveBeenCalled();
+      expect(getByTestId('start-agent-button')).toBeTruthy();
+    });
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('routes to onboarding only after the second button tap', async () => {
+    mockUser = { id: 'user_test' };
+    mockRunBootstrap.mockResolvedValue({
+      route: 'onboarding',
+      onboardingSessionId: 'session_onboarding_user_test',
+    });
+
+    const { getByTestId } = render(<StartScreen />);
+
+    fireEvent.press(getByTestId('start-primary-button'));
+
+    await waitFor(() => {
+      expect(getByTestId('start-agent-button')).toBeTruthy();
+    });
+
+    fireEvent.press(getByTestId('start-agent-button'));
+
+    await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith({
         pathname: '/assistant',
         params: {
@@ -109,17 +120,40 @@ describe('StartScreen bootstrap regressions', () => {
     });
   });
 
-  it('does not navigate when authenticated bootstrap returns null', async () => {
+  it('shows second button for assistant and routes after second tap', async () => {
+    mockUser = { id: 'user_test' };
+    mockRunBootstrap.mockResolvedValue({
+      route: 'assistant',
+      onboardingSessionId: null,
+    });
+
+    const { getByTestId, getByText } = render(<StartScreen />);
+    fireEvent.press(getByTestId('start-primary-button'));
+
+    await waitFor(() => {
+      expect(getByText('Open assistant')).toBeTruthy();
+    });
+    expect(mockReplace).not.toHaveBeenCalled();
+
+    fireEvent.press(getByTestId('start-agent-button'));
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith('/assistant');
+    });
+  });
+
+  it('does not unlock second button when bootstrap returns null', async () => {
     mockUser = { id: 'user_test' };
     mockRunBootstrap.mockResolvedValue(null);
 
-    const { getByTestId } = render(<StartScreen />);
+    const { getByTestId, queryByTestId } = render(<StartScreen />);
     fireEvent.press(getByTestId('start-primary-button'));
 
     await waitFor(() => {
       expect(mockRunBootstrap).toHaveBeenCalledTimes(1);
     });
     expect(mockReplace).not.toHaveBeenCalled();
+    expect(queryByTestId('start-agent-button')).toBeNull();
   });
 
   it('handles sign-in error objects and surfaces their message', async () => {
@@ -144,7 +178,7 @@ describe('StartScreen bootstrap regressions', () => {
     });
   });
 
-  it('routes onboarding without session id using only onboarding trigger', async () => {
+  it('routes onboarding without session id using only onboarding trigger on second tap', async () => {
     mockUser = { id: 'user_test' };
     mockRunBootstrap.mockResolvedValue({
       route: 'onboarding',
@@ -153,6 +187,12 @@ describe('StartScreen bootstrap regressions', () => {
 
     const { getByTestId } = render(<StartScreen />);
     fireEvent.press(getByTestId('start-primary-button'));
+
+    await waitFor(() => {
+      expect(getByTestId('start-agent-button')).toBeTruthy();
+    });
+
+    fireEvent.press(getByTestId('start-agent-button'));
 
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith({
@@ -168,6 +208,21 @@ describe('StartScreen bootstrap regressions', () => {
     mockUser = { id: 'user_test' };
     mockBootstrapState = {
       phase: 'verifying',
+      progress: '',
+      error: null,
+    };
+
+    const { getByText, getByTestId } = render(<StartScreen />);
+    expect(getByText('Setting Up...')).toBeTruthy();
+    expect(getByTestId('start-primary-button').props.accessibilityState.disabled).toBe(
+      true
+    );
+  });
+
+  it('treats requesting_permissions phase as busy', () => {
+    mockUser = { id: 'user_test' };
+    mockBootstrapState = {
+      phase: 'requesting_permissions',
       progress: '',
       error: null,
     };
