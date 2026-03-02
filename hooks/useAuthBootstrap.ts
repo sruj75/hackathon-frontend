@@ -69,6 +69,7 @@ const FRIENDLY_APP_NAMES: Record<string, string> = {
   googlecalendar: 'Google Calendar',
   googletasks: 'Google Tasks',
 };
+const REQUIRED_COMPOSIO_APPS = ['googlecalendar', 'googletasks'] as const;
 const EXPO_PROJECT_ID = 'c4e705ec-1671-4e31-ba01-43d1bc1234c7';
 const STALLED_HINT_MS = 8000;
 const STALE_RUN_ERROR = 'STALE_BOOTSTRAP_RUN';
@@ -103,6 +104,13 @@ class BootstrapFlowError extends Error {
 
 function formatAppName(app: string): string {
   return FRIENDLY_APP_NAMES[app.toLowerCase()] ?? app;
+}
+
+function getMissingRequiredApps(apps: IntegrationAppStatus[]): string[] {
+  const byApp = new Map(
+    apps.map((app) => [app.app.toLowerCase(), app.connected === true])
+  );
+  return REQUIRED_COMPOSIO_APPS.filter((requiredApp) => !byApp.get(requiredApp));
 }
 
 async function readResponseError(response: Response): Promise<string> {
@@ -605,17 +613,21 @@ export function useAuthBootstrap(
       }
 
       let bootstrapState = await fetchBootstrapState(runId, accessToken, runStartedAt);
-      while (bootstrapState.route_hint === 'connect_flow') {
-        const missingApps = bootstrapState.apps
-          .filter((app) => !app.connected)
-          .map((app) => app.app);
-
-        if (missingApps.length === 0) {
-          break;
-        }
-
+      let missingApps = getMissingRequiredApps(bootstrapState.apps);
+      let connectAttempts = 0;
+      while (missingApps.length > 0) {
+        connectAttempts += 1;
         await connectMissingApps(runId, accessToken, missingApps, runStartedAt);
         bootstrapState = await fetchBootstrapState(runId, accessToken, runStartedAt);
+        missingApps = getMissingRequiredApps(bootstrapState.apps);
+        if (connectAttempts >= 3 && missingApps.length > 0) {
+          throw new BootstrapFlowError(
+            'unknown',
+            `Required app connections are still pending (${missingApps
+              .map((app) => formatAppName(app))
+              .join(', ')}). Tap retry to continue.`
+          );
+        }
       }
 
       if (bootstrapState.route_hint === 'connect_flow') {

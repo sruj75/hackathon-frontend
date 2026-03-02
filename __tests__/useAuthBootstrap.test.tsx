@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
+import * as WebBrowser from 'expo-web-browser';
 import { AudioStreamModule } from 'expo-realtime-audio';
 
 import { useAuthBootstrap } from '@/hooks/useAuthBootstrap';
@@ -37,6 +38,21 @@ jest.mock('expo-realtime-audio', () => ({
 
 (global as any).fetch = jest.fn();
 
+function connectedComposioApps() {
+  return [
+    {
+      app: 'googlecalendar',
+      connected: true,
+      status: 'connected',
+    },
+    {
+      app: 'googletasks',
+      connected: true,
+      status: 'connected',
+    },
+  ];
+}
+
 describe('useAuthBootstrap', () => {
   const getAccessToken = jest.fn(async () => 'jwt_test');
 
@@ -52,6 +68,10 @@ describe('useAuthBootstrap', () => {
     (Notifications.getExpoPushTokenAsync as jest.Mock).mockResolvedValue({
       data: 'ExponentPushToken[test123]',
     });
+    (WebBrowser.openAuthSessionAsync as jest.Mock).mockResolvedValue({
+      type: 'success',
+      url: 'intentive://composio/callback',
+    });
     (global.fetch as jest.Mock).mockReset();
   });
 
@@ -61,7 +81,7 @@ describe('useAuthBootstrap', () => {
       status: 200,
       json: async () => ({
         status: 'ok',
-        apps: [],
+        apps: connectedComposioApps(),
         all_connected: true,
         onboarding_status: 'completed',
         route_hint: 'assistant',
@@ -92,7 +112,7 @@ describe('useAuthBootstrap', () => {
       status: 200,
       json: async () => ({
         status: 'ok',
-        apps: [],
+        apps: connectedComposioApps(),
         all_connected: true,
         onboarding_status: 'pending',
         route_hint: 'onboarding',
@@ -130,7 +150,7 @@ describe('useAuthBootstrap', () => {
         status: 200,
         json: async () => ({
           status: 'ok',
-          apps: [],
+          apps: connectedComposioApps(),
           all_connected: true,
           onboarding_status: 'pending',
           route_hint: 'onboarding',
@@ -167,7 +187,7 @@ describe('useAuthBootstrap', () => {
         status: 200,
         json: async () => ({
           status: 'ok',
-          apps: [],
+          apps: connectedComposioApps(),
           all_connected: true,
           onboarding_status: 'pending',
           route_hint: 'onboarding',
@@ -231,7 +251,7 @@ describe('useAuthBootstrap', () => {
         status: 200,
         json: async () => ({
           status: 'ok',
-          apps: [],
+          apps: connectedComposioApps(),
           all_connected: true,
           onboarding_status: 'completed',
           route_hint: 'assistant',
@@ -255,7 +275,7 @@ describe('useAuthBootstrap', () => {
         status: 200,
         json: async () => ({
           status: 'ok',
-          apps: [],
+          apps: connectedComposioApps(),
           all_connected: true,
           onboarding_status: 'completed',
           route_hint: 'assistant',
@@ -294,7 +314,7 @@ describe('useAuthBootstrap', () => {
         status: 200,
         json: async () => ({
           status: 'ok',
-          apps: [],
+          apps: connectedComposioApps(),
           all_connected: true,
           onboarding_status: 'pending',
           route_hint: 'onboarding',
@@ -306,7 +326,7 @@ describe('useAuthBootstrap', () => {
         status: 200,
         json: async () => ({
           status: 'ok',
-          apps: [],
+          apps: connectedComposioApps(),
           all_connected: true,
           onboarding_status: 'pending',
           route_hint: 'onboarding',
@@ -348,6 +368,70 @@ describe('useAuthBootstrap', () => {
     expect(result.current.state.ready).toEqual({
       route: 'onboarding',
       resumeSessionId: 'session_900',
+    });
+  });
+
+  it('enforces required Composio connections even when route_hint is onboarding', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'ok',
+          apps: [
+            { app: 'googlecalendar', connected: false, status: 'pending' },
+            { app: 'googletasks', connected: false, status: 'pending' },
+          ],
+          all_connected: false,
+          onboarding_status: 'pending',
+          route_hint: 'onboarding',
+          onboarding_session_id: 'session_connect_required',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'ok',
+          links: [
+            { app: 'googlecalendar', redirect_url: 'https://example.com/cal' },
+            { app: 'googletasks', redirect_url: 'https://example.com/tasks' },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'ok',
+          apps: connectedComposioApps(),
+          all_connected: true,
+          onboarding_status: 'pending',
+          route_hint: 'onboarding',
+          onboarding_session_id: 'session_connect_required',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => '',
+      });
+
+    const { result } = renderHook(() =>
+      useAuthBootstrap('http://localhost:8080', getAccessToken)
+    );
+
+    await act(async () => {
+      await result.current.startSetup();
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.phase).toBe('ready');
+    });
+    expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledTimes(2);
+    expect(result.current.state.ready).toEqual({
+      route: 'onboarding',
+      resumeSessionId: 'session_connect_required',
     });
   });
 });
