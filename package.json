@@ -13,7 +13,10 @@
     "typescript": "tsc --noemit -p tsconfig.json"
   },
   "jest": {
-    "preset": "jest-expo"
+    "preset": "jest-expo",
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.js"
+    ]
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

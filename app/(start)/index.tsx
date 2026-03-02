@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import {
   ActivityIndicator,
+  AppState,
+  Linking as NativeLinking,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -28,111 +30,104 @@ export default function StartScreen() {
       ? 'App configuration is missing in this build. Please contact support.'
       : null;
   const { user, isLoading, signInWithGoogle, getAccessToken } = useAuth();
-  const { state, setSigningIn, setError, clearError, runBootstrap } =
-    useAuthBootstrap(backendUrl, getAccessToken);
-  const [readyRoute, setReadyRoute] = useState<'assistant' | 'onboarding' | null>(
-    null
-  );
-  const [readyParams, setReadyParams] = useState<Record<string, string> | null>(
-    null
-  );
+  const {
+    state,
+    setSigningIn,
+    setError,
+    clearError,
+    resetState,
+    startSetup,
+    cancelSetup,
+    retrySetup,
+    recheckAfterForeground,
+  } = useAuthBootstrap(backendUrl, getAccessToken);
 
   useEffect(() => {
     if (!user) {
-      setReadyRoute(null);
-      setReadyParams(null);
+      resetState();
     }
-  }, [user]);
+  }, [resetState, user]);
 
-  const runBootstrapSetup = useCallback(async () => {
-    const startedAt = Date.now();
-    console.log('[BOOTSTRAP_FLOW] setup_start');
-    const result = await runBootstrap();
-    if (!result) {
-      console.warn('[BOOTSTRAP_FLOW] setup_fail');
-      setReadyRoute(null);
-      setReadyParams(null);
-      return;
-    }
-    const nextParams =
-      result.route === 'onboarding'
-        ? {
-            trigger_type: 'onboarding',
-            ...(result.onboardingSessionId
-              ? { resume_session_id: result.onboardingSessionId }
-              : {}),
-          }
-        : null;
-    setReadyRoute(result.route);
-    setReadyParams(nextParams);
-    console.log(
-      `[BOOTSTRAP_FLOW] setup_success route=${result.route} duration_ms=${
-        Date.now() - startedAt
-      }`
-    );
-  }, [runBootstrap]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (status) => {
+      if (status === 'active' && user) {
+        void recheckAfterForeground();
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [recheckAfterForeground, user]);
 
   const handleStartAgentPress = useCallback(() => {
-    if (!readyRoute) {
+    if (!state.ready) {
       return;
     }
-    if (readyRoute === 'assistant') {
+    if (state.ready.route === 'assistant') {
       router.replace('/assistant');
       return;
     }
-    if (readyRoute === 'onboarding') {
-      router.replace({
-        pathname: '/assistant',
-        params: readyParams ?? { trigger_type: 'onboarding' },
-      });
-    }
-  }, [readyParams, readyRoute, router]);
+
+    router.replace({
+      pathname: '/assistant',
+      params: {
+        trigger_type: 'onboarding',
+        ...(state.ready.resumeSessionId
+          ? { resume_session_id: state.ready.resumeSessionId }
+          : {}),
+      },
+    });
+  }, [router, state.ready]);
 
   const handlePrimaryPress = useCallback(async () => {
-    if (readyRoute) {
+    if (configurationError || state.phase === 'ready') {
       return;
     }
-    clearError();
 
+    clearError();
     if (!user) {
       const signInStartedAt = Date.now();
-      setSigningIn();
       console.log('[AUTH_FLOW] sign_in_start');
+      setSigningIn();
       try {
         await signInWithGoogle();
         console.log(
           `[AUTH_FLOW] sign_in_success duration_ms=${Date.now() - signInStartedAt}`
         );
-        await runBootstrapSetup();
       } catch (error) {
         console.error('[AUTH_FLOW] sign_in_fail', error);
-        setReadyRoute(null);
-        setReadyParams(null);
         setError(normalizeErrorMessage(error));
+        return;
       }
-      return;
     }
 
-    await runBootstrapSetup();
+    await startSetup();
   }, [
     clearError,
-    readyRoute,
-    runBootstrapSetup,
+    configurationError,
     setError,
     setSigningIn,
     signInWithGoogle,
+    startSetup,
+    state.phase,
     user,
   ]);
 
-  const setupReady = Boolean(readyRoute);
-  const isBusy =
-    isLoading ||
-    Boolean(configurationError) ||
-    state.phase === 'signing_in' ||
-    state.phase === 'connecting_tools' ||
-    state.phase === 'requesting_permissions' ||
-    state.phase === 'verifying' ||
-    (state.phase === 'routing' && !setupReady);
+  const handleRetryPress = useCallback(async () => {
+    await retrySetup();
+  }, [retrySetup]);
+
+  const handleOpenSettings = useCallback(async () => {
+    try {
+      await NativeLinking.openSettings();
+    } catch (error) {
+      console.warn('[BOOTSTRAP_FLOW] open_settings_fail', error);
+    }
+  }, []);
+
+  const setupReady = state.phase === 'ready' && Boolean(state.ready);
+  const isBusy = isLoading || state.isBusy;
+  const primaryDisabled = Boolean(configurationError) || isBusy || setupReady;
 
   const buttonText = !user
     ? state.phase === 'signing_in'
@@ -149,6 +144,8 @@ export default function StartScreen() {
     state.progress ||
     (setupReady
       ? 'Setup complete. Tap below to start onboarding.'
+      : state.isStalled
+      ? 'Still working. You can wait or cancel and retry.'
       : null) ||
     (!user
       ? 'Sign in with Google to begin setup.'
@@ -163,7 +160,7 @@ export default function StartScreen() {
         onPress={handlePrimaryPress}
         style={styles.button}
         activeOpacity={0.7}
-        disabled={isBusy || setupReady}
+        disabled={primaryDisabled}
         testID="start-primary-button"
       >
         {isBusy ? (
@@ -176,7 +173,19 @@ export default function StartScreen() {
         <Text style={styles.buttonText}>{buttonText}</Text>
       </TouchableOpacity>
 
-      {setupReady ? (
+      {state.canCancel ? (
+        <TouchableOpacity
+          onPress={cancelSetup}
+          style={styles.secondaryButton}
+          activeOpacity={0.7}
+          disabled={!state.canCancel}
+          testID="start-cancel-button"
+        >
+          <Text style={styles.secondaryButtonText}>Cancel setup</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {setupReady && state.ready ? (
         <TouchableOpacity
           onPress={handleStartAgentPress}
           style={styles.secondaryButton}
@@ -185,8 +194,34 @@ export default function StartScreen() {
           testID="start-agent-button"
         >
           <Text style={styles.secondaryButtonText}>
-            {readyRoute === 'assistant' ? 'Open assistant' : 'Start onboarding agent'}
+            {state.ready.route === 'assistant'
+              ? 'Open assistant'
+              : 'Start onboarding agent'}
           </Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {state.canRetry && !setupReady ? (
+        <TouchableOpacity
+          onPress={handleRetryPress}
+          style={styles.secondaryButton}
+          activeOpacity={0.7}
+          disabled={isBusy}
+          testID="start-retry-button"
+        >
+          <Text style={styles.secondaryButtonText}>Retry setup</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {state.errorCode === 'notification_required' ? (
+        <TouchableOpacity
+          onPress={handleOpenSettings}
+          style={styles.secondaryButton}
+          activeOpacity={0.7}
+          disabled={isBusy}
+          testID="start-open-settings-button"
+        >
+          <Text style={styles.secondaryButtonText}>Open Settings</Text>
         </TouchableOpacity>
       ) : null}
 

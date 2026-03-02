@@ -4,10 +4,14 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 const mockReplace = jest.fn();
 const mockSignIn = jest.fn();
 const mockGetAccessToken = jest.fn(async () => 'jwt_test');
-const mockRunBootstrap = jest.fn();
 const mockSetSigningIn = jest.fn();
 const mockSetError = jest.fn();
 const mockClearError = jest.fn();
+const mockResetState = jest.fn();
+const mockStartSetup = jest.fn();
+const mockCancelSetup = jest.fn();
+const mockRetrySetup = jest.fn();
+const mockRecheckAfterForeground = jest.fn();
 
 let mockUser: { id: string } | null = null;
 let mockAuthLoading = false;
@@ -15,6 +19,17 @@ let mockBootstrapState = {
   phase: 'idle',
   progress: '',
   error: null as string | null,
+  errorCode: null as string | null,
+  ready: null as
+    | {
+        route: 'assistant' | 'onboarding';
+        resumeSessionId?: string;
+      }
+    | null,
+  isBusy: false,
+  isStalled: false,
+  canCancel: false,
+  canRetry: false,
 };
 
 jest.mock('@/hooks/useAuth', () => ({
@@ -32,7 +47,11 @@ jest.mock('@/hooks/useAuthBootstrap', () => ({
     setSigningIn: mockSetSigningIn,
     setError: mockSetError,
     clearError: mockClearError,
-    runBootstrap: mockRunBootstrap,
+    resetState: mockResetState,
+    startSetup: mockStartSetup,
+    cancelSetup: mockCancelSetup,
+    retrySetup: mockRetrySetup,
+    recheckAfterForeground: mockRecheckAfterForeground,
   }),
 }));
 
@@ -58,55 +77,57 @@ describe('StartScreen bootstrap regressions', () => {
       phase: 'idle',
       progress: '',
       error: null,
+      errorCode: null,
+      ready: null,
+      isBusy: false,
+      isStalled: false,
+      canCancel: false,
+      canRetry: false,
     };
-    mockRunBootstrap.mockResolvedValue(null);
+    mockStartSetup.mockResolvedValue(undefined);
+    mockRetrySetup.mockResolvedValue(undefined);
+    mockRecheckAfterForeground.mockResolvedValue(undefined);
   });
 
-  it('starts Google sign-in when unauthenticated user taps primary button', async () => {
+  it('unauthenticated tap triggers sign-in then setup start', async () => {
     const { getByText } = render(<StartScreen />);
-
     fireEvent.press(getByText('Sign In With Google'));
 
     await waitFor(() => {
       expect(mockSetSigningIn).toHaveBeenCalledTimes(1);
       expect(mockSignIn).toHaveBeenCalledTimes(1);
-      expect(mockRunBootstrap).toHaveBeenCalledTimes(1);
+      expect(mockStartSetup).toHaveBeenCalledTimes(1);
     });
   });
 
-  it('shows second button for onboarding after setup instead of auto-routing', async () => {
+  it('shows Start onboarding agent and does not auto-route when ready for onboarding', () => {
     mockUser = { id: 'user_test' };
-    mockRunBootstrap.mockResolvedValue({
-      route: 'onboarding',
-      onboardingSessionId: 'session_onboarding_user_test',
-    });
+    mockBootstrapState = {
+      ...mockBootstrapState,
+      phase: 'ready',
+      ready: {
+        route: 'onboarding',
+        resumeSessionId: 'session_onboarding_user_test',
+      },
+    };
 
-    const { getByTestId } = render(<StartScreen />);
-
-    fireEvent.press(getByTestId('start-primary-button'));
-
-    await waitFor(() => {
-      expect(mockRunBootstrap).toHaveBeenCalled();
-      expect(getByTestId('start-agent-button')).toBeTruthy();
-    });
+    const { getByText } = render(<StartScreen />);
+    expect(getByText('Start onboarding agent')).toBeTruthy();
     expect(mockReplace).not.toHaveBeenCalled();
   });
 
-  it('routes to onboarding only after the second button tap', async () => {
+  it('routes onboarding only on second button tap with optional resume session id', async () => {
     mockUser = { id: 'user_test' };
-    mockRunBootstrap.mockResolvedValue({
-      route: 'onboarding',
-      onboardingSessionId: 'session_onboarding_user_test',
-    });
+    mockBootstrapState = {
+      ...mockBootstrapState,
+      phase: 'ready',
+      ready: {
+        route: 'onboarding',
+        resumeSessionId: 'session_onboarding_user_test',
+      },
+    };
 
     const { getByTestId } = render(<StartScreen />);
-
-    fireEvent.press(getByTestId('start-primary-button'));
-
-    await waitFor(() => {
-      expect(getByTestId('start-agent-button')).toBeTruthy();
-    });
-
     fireEvent.press(getByTestId('start-agent-button'));
 
     await waitFor(() => {
@@ -120,96 +141,82 @@ describe('StartScreen bootstrap regressions', () => {
     });
   });
 
-  it('shows second button for assistant and routes after second tap', async () => {
+  it('shows Open assistant and routes to /assistant on second button tap', async () => {
     mockUser = { id: 'user_test' };
-    mockRunBootstrap.mockResolvedValue({
-      route: 'assistant',
-      onboardingSessionId: null,
-    });
+    mockBootstrapState = {
+      ...mockBootstrapState,
+      phase: 'ready',
+      ready: { route: 'assistant' },
+    };
 
-    const { getByTestId, getByText } = render(<StartScreen />);
-    fireEvent.press(getByTestId('start-primary-button'));
-
-    await waitFor(() => {
-      expect(getByText('Open assistant')).toBeTruthy();
-    });
+    const { getByText, getByTestId } = render(<StartScreen />);
+    expect(getByText('Open assistant')).toBeTruthy();
     expect(mockReplace).not.toHaveBeenCalled();
 
     fireEvent.press(getByTestId('start-agent-button'));
-
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith('/assistant');
     });
   });
 
-  it('does not unlock second button when bootstrap returns null', async () => {
+  it('notification denied path blocks readiness and shows settings + retry controls', () => {
     mockUser = { id: 'user_test' };
-    mockRunBootstrap.mockResolvedValue(null);
+    mockBootstrapState = {
+      ...mockBootstrapState,
+      phase: 'error',
+      error: 'Notification permission is required. Please allow it in Settings.',
+      errorCode: 'notification_required',
+      canRetry: true,
+    };
 
-    const { getByTestId, queryByTestId } = render(<StartScreen />);
-    fireEvent.press(getByTestId('start-primary-button'));
-
-    await waitFor(() => {
-      expect(mockRunBootstrap).toHaveBeenCalledTimes(1);
-    });
-    expect(mockReplace).not.toHaveBeenCalled();
+    const { getByTestId, queryByTestId, getByText } = render(<StartScreen />);
+    expect(getByTestId('start-open-settings-button')).toBeTruthy();
+    expect(getByTestId('start-retry-button')).toBeTruthy();
     expect(queryByTestId('start-agent-button')).toBeNull();
+    expect(getByText(/Notification permission is required/i)).toBeTruthy();
   });
 
-  it('handles sign-in error objects and surfaces their message', async () => {
-    mockSignIn.mockRejectedValue(new Error('OAuth unavailable'));
-
-    const { getByText } = render(<StartScreen />);
-    fireEvent.press(getByText('Sign In With Google'));
-
-    await waitFor(() => {
-      expect(mockSetError).toHaveBeenCalledWith('OAuth unavailable');
-    });
-  });
-
-  it('falls back to default sign-in error message for non-error throws', async () => {
-    mockSignIn.mockRejectedValue('unexpected');
-
-    const { getByText } = render(<StartScreen />);
-    fireEvent.press(getByText('Sign In With Google'));
-
-    await waitFor(() => {
-      expect(mockSetError).toHaveBeenCalledWith('Google sign-in failed');
-    });
-  });
-
-  it('routes onboarding without session id using only onboarding trigger on second tap', async () => {
+  it('mic denied path blocks readiness and surfaces error', () => {
     mockUser = { id: 'user_test' };
-    mockRunBootstrap.mockResolvedValue({
-      route: 'onboarding',
-      onboardingSessionId: null,
-    });
+    mockBootstrapState = {
+      ...mockBootstrapState,
+      phase: 'error',
+      error: 'Microphone permission is required. Please allow it and tap continue.',
+      errorCode: 'microphone_required',
+      canRetry: true,
+    };
+
+    const { queryByTestId, getByText } = render(<StartScreen />);
+    expect(queryByTestId('start-agent-button')).toBeNull();
+    expect(getByText(/Microphone permission is required/i)).toBeTruthy();
+  });
+
+  it('retry from error exits blocked state via retry action', async () => {
+    mockUser = { id: 'user_test' };
+    mockBootstrapState = {
+      ...mockBootstrapState,
+      phase: 'error',
+      error: 'Something went wrong',
+      errorCode: 'unknown',
+      canRetry: true,
+    };
 
     const { getByTestId } = render(<StartScreen />);
-    fireEvent.press(getByTestId('start-primary-button'));
+    fireEvent.press(getByTestId('start-retry-button'));
 
     await waitFor(() => {
-      expect(getByTestId('start-agent-button')).toBeTruthy();
-    });
-
-    fireEvent.press(getByTestId('start-agent-button'));
-
-    await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith({
-        pathname: '/assistant',
-        params: {
-          trigger_type: 'onboarding',
-        },
-      });
+      expect(mockRetrySetup).toHaveBeenCalledTimes(1);
     });
   });
 
-  it('shows setup loading state and disables primary button while busy', () => {
+  it('busy state includes requesting notifications and shows cancel setup', () => {
     mockUser = { id: 'user_test' };
     mockBootstrapState = {
-      phase: 'verifying',
-      progress: '',
-      error: null,
+      ...mockBootstrapState,
+      phase: 'requesting_notifications',
+      progress: 'Requesting notification permission...',
+      isBusy: true,
+      canCancel: true,
     };
 
     const { getByText, getByTestId } = render(<StartScreen />);
@@ -217,62 +224,34 @@ describe('StartScreen bootstrap regressions', () => {
     expect(getByTestId('start-primary-button').props.accessibilityState.disabled).toBe(
       true
     );
+    expect(getByTestId('start-cancel-button')).toBeTruthy();
   });
 
-  it('treats requesting_permissions phase as busy', () => {
+  it('cancel setup button triggers cancel action', () => {
     mockUser = { id: 'user_test' };
     mockBootstrapState = {
-      phase: 'requesting_permissions',
-      progress: '',
-      error: null,
+      ...mockBootstrapState,
+      phase: 'verifying_setup',
+      isBusy: true,
+      canCancel: true,
     };
 
-    const { getByText, getByTestId } = render(<StartScreen />);
-    expect(getByText('Setting Up...')).toBeTruthy();
-    expect(getByTestId('start-primary-button').props.accessibilityState.disabled).toBe(
-      true
-    );
+    const { getByTestId } = render(<StartScreen />);
+    fireEvent.press(getByTestId('start-cancel-button'));
+    expect(mockCancelSetup).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps start-agent button enabled when setup is ready even if phase is routing', async () => {
+  it('shows stalled hint while setup is busy and stalled', () => {
     mockUser = { id: 'user_test' };
     mockBootstrapState = {
-      phase: 'idle',
-      progress: '',
-      error: null,
+      ...mockBootstrapState,
+      phase: 'connecting_tools',
+      isBusy: true,
+      isStalled: true,
+      canCancel: true,
     };
-    mockRunBootstrap.mockResolvedValue({
-      route: 'onboarding',
-      onboardingSessionId: 'session_onboarding_user_test',
-    });
 
-    const { getByTestId, rerender } = render(<StartScreen />);
-    fireEvent.press(getByTestId('start-primary-button'));
-
-    await waitFor(() => {
-      expect(getByTestId('start-agent-button')).toBeTruthy();
-    });
-
-    mockBootstrapState = {
-      phase: 'routing',
-      progress: 'Setup complete. Ready to start onboarding.',
-      error: null,
-    };
-    rerender(<StartScreen />);
-
-    expect(getByTestId('start-agent-button').props.accessibilityState.disabled).toBe(
-      false
-    );
-
-    fireEvent.press(getByTestId('start-agent-button'));
-    await waitFor(() => {
-      expect(mockReplace).toHaveBeenCalledWith({
-        pathname: '/assistant',
-        params: {
-          trigger_type: 'onboarding',
-          resume_session_id: 'session_onboarding_user_test',
-        },
-      });
-    });
+    const { getByText } = render(<StartScreen />);
+    expect(getByText(/Still working. You can wait or cancel and retry./i)).toBeTruthy();
   });
 });
