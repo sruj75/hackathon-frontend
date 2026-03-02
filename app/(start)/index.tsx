@@ -124,6 +124,7 @@ export default function StartScreen() {
     user,
   ]);
 
+  const setupReady = Boolean(readyRoute);
   const isBusy =
     isLoading ||
     Boolean(configurationError) ||
@@ -131,9 +132,8 @@ export default function StartScreen() {
     state.phase === 'connecting_tools' ||
     state.phase === 'requesting_permissions' ||
     state.phase === 'verifying' ||
-    state.phase === 'routing';
+    (state.phase === 'routing' && !setupReady);
 
-  const setupReady = Boolean(readyRoute);
   const buttonText = !user
     ? state.phase === 'signing_in'
       ? 'Signing In...'

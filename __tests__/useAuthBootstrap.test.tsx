@@ -23,6 +23,11 @@ jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn(),
   requestPermissionsAsync: jest.fn(),
   getExpoPushTokenAsync: jest.fn(),
+  IosAuthorizationStatus: {
+    AUTHORIZED: 2,
+    PROVISIONAL: 3,
+    EPHEMERAL: 4,
+  },
 }));
 
 jest.mock('expo-realtime-audio', () => ({
@@ -182,6 +187,51 @@ describe('useAuthBootstrap', () => {
     expect(bootstrapResult).toEqual({
       route: 'onboarding',
       onboardingSessionId: 'session_123',
+    });
+  });
+
+  it('accepts iOS provisional notification authorization as granted', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'ok',
+          apps: [],
+          all_connected: true,
+          onboarding_status: 'pending',
+          route_hint: 'onboarding',
+          onboarding_session_id: 'session_abc',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      });
+
+    (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({
+      status: 'denied',
+      ios: {
+        status: 3,
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useAuthBootstrap('http://localhost:8080', getAccessToken)
+    );
+
+    let bootstrapResult = null;
+    await act(async () => {
+      bootstrapResult = await result.current.runBootstrap();
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.phase).toBe('idle');
+    });
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
+    expect(bootstrapResult).toEqual({
+      route: 'onboarding',
+      onboardingSessionId: 'session_abc',
     });
   });
 });

@@ -233,4 +233,46 @@ describe('StartScreen bootstrap regressions', () => {
       true
     );
   });
+
+  it('keeps start-agent button enabled when setup is ready even if phase is routing', async () => {
+    mockUser = { id: 'user_test' };
+    mockBootstrapState = {
+      phase: 'idle',
+      progress: '',
+      error: null,
+    };
+    mockRunBootstrap.mockResolvedValue({
+      route: 'onboarding',
+      onboardingSessionId: 'session_onboarding_user_test',
+    });
+
+    const { getByTestId, rerender } = render(<StartScreen />);
+    fireEvent.press(getByTestId('start-primary-button'));
+
+    await waitFor(() => {
+      expect(getByTestId('start-agent-button')).toBeTruthy();
+    });
+
+    mockBootstrapState = {
+      phase: 'routing',
+      progress: 'Setup complete. Ready to start onboarding.',
+      error: null,
+    };
+    rerender(<StartScreen />);
+
+    expect(getByTestId('start-agent-button').props.accessibilityState.disabled).toBe(
+      false
+    );
+
+    fireEvent.press(getByTestId('start-agent-button'));
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith({
+        pathname: '/assistant',
+        params: {
+          trigger_type: 'onboarding',
+          resume_session_id: 'session_onboarding_user_test',
+        },
+      });
+    });
+  });
 });

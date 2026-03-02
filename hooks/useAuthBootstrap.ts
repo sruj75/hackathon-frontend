@@ -60,6 +60,11 @@ const FRIENDLY_APP_NAMES: Record<string, string> = {
 };
 const EXPO_PROJECT_ID = 'c4e705ec-1671-4e31-ba01-43d1bc1234c7';
 const REQUEST_TIMEOUT_MS = 20000;
+const IOS_GRANTED_STATUSES = new Set<number>([
+  Notifications.IosAuthorizationStatus.AUTHORIZED,
+  Notifications.IosAuthorizationStatus.PROVISIONAL,
+  Notifications.IosAuthorizationStatus.EPHEMERAL,
+]);
 
 function formatAppName(app: string): string {
   return FRIENDLY_APP_NAMES[app.toLowerCase()] ?? app;
@@ -97,6 +102,16 @@ function normalizeErrorMessage(error: unknown): string {
     return error.message;
   }
   return 'Something went wrong while setting up your account.';
+}
+
+function isNotificationPermissionGranted(
+  permission: Awaited<ReturnType<typeof Notifications.getPermissionsAsync>>
+): boolean {
+  if (permission.status === 'granted') {
+    return true;
+  }
+  const iosStatus = permission.ios?.status;
+  return typeof iosStatus === 'number' && IOS_GRANTED_STATUSES.has(iosStatus);
 }
 
 export function useAuthBootstrap(
@@ -289,23 +304,20 @@ export function useAuthBootstrap(
             error: null,
           });
 
-          const { status: existingStatus } =
-            await Notifications.getPermissionsAsync();
-          let finalStatus = existingStatus;
+          let finalPermission = await Notifications.getPermissionsAsync();
 
-          if (existingStatus !== 'granted') {
-            const { status } = await Notifications.requestPermissionsAsync();
-            finalStatus = status;
+          if (!isNotificationPermissionGranted(finalPermission)) {
+            finalPermission = await Notifications.requestPermissionsAsync();
           }
 
-          if (finalStatus !== 'granted') {
+          if (!isNotificationPermissionGranted(finalPermission)) {
             console.error('[BOOTSTRAP_FLOW] permissions_fail notifications_denied');
             throw new Error(
               'Notification permission is required. Please allow it and tap continue.'
             );
           }
 
-          if (finalStatus === 'granted' && backendUrl) {
+          if (backendUrl) {
             setState({
               phase: 'requesting_permissions',
               progress: 'Registering notifications...',
@@ -390,8 +402,8 @@ export function useAuthBootstrap(
       await requestRequiredPermissions(accessToken);
 
       setState({
-        phase: 'routing',
-        progress: 'Setup complete. Ready to start onboarding.',
+        phase: 'idle',
+        progress: '',
         error: null,
       });
 
