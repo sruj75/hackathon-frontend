@@ -42,16 +42,15 @@ interface Transcription {
 }
 
 type ViewMode = 'voice' | 'chat' | 'ui';
-const PLAYBACK_END_DEBOUNCE_MS_DEFAULT = 320;
 const PLAYBACK_END_DEBOUNCE_MS_ONBOARDING = 900;
-const ONBOARDING_ECHO_GUARD_TAIL_MS = 250;
-const ONBOARDING_BARGE_IN_OPEN_WINDOW_MS = 1200;
-const ONBOARDING_BARGE_IN_MIN_CONSECUTIVE_FRAMES = 4;
-const ONBOARDING_BARGE_IN_ABS_RMS_THRESHOLD = 0.035;
-const ONBOARDING_BARGE_IN_PLAYBACK_RMS_MULTIPLIER = 1.8;
-const ONBOARDING_MIC_NOISE_RMS_MULTIPLIER = 3.0;
-const ONBOARDING_SIGNAL_EMA_ALPHA = 0.22;
-const ONBOARDING_NOISE_EMA_ALPHA = 0.08;
+const ECHO_GUARD_TAIL_MS = 250;
+const BARGE_IN_OPEN_WINDOW_MS = 1200;
+const BARGE_IN_MIN_CONSECUTIVE_FRAMES = 4;
+const BARGE_IN_ABS_RMS_THRESHOLD = 0.035;
+const BARGE_IN_PLAYBACK_RMS_MULTIPLIER = 1.8;
+const MIC_NOISE_RMS_MULTIPLIER = 3.0;
+const SIGNAL_EMA_ALPHA = 0.22;
+const NOISE_EMA_ALPHA = 0.08;
 
 function clampUnit(value: number): number {
   if (!Number.isFinite(value)) {
@@ -117,7 +116,10 @@ function isOnboardingCompletionFailedEvent(
 }
 
 function isADKEvent(event: AgentSocketEvent): event is ADKEvent {
-  return !isOnboardingCompletedEvent(event) && !isOnboardingCompletionFailedEvent(event);
+  return (
+    !isOnboardingCompletedEvent(event) &&
+    !isOnboardingCompletionFailedEvent(event)
+  );
 }
 
 export default function AssistantScreen() {
@@ -269,17 +271,14 @@ export default function AssistantScreen() {
     lastInputChunkAtMs: null as number | null,
     maxInputChunkGapMs: 0,
   });
-  const onboardingEchoGuardUntilMsRef = useRef(0);
-  const onboardingBargeInActiveUntilMsRef = useRef(0);
-  const onboardingPlaybackRmsEmaRef = useRef(0);
-  const onboardingMicNoiseRmsEmaRef = useRef(0.01);
-  const onboardingBargeInConsecutiveFramesRef = useRef(0);
-  const onboardingEchoGuardDropCountRef = useRef(0);
-  const onboardingBargeInTriggerCountRef = useRef(0);
-  const playbackEndDebounceMs =
-    triggerType === 'onboarding'
-      ? PLAYBACK_END_DEBOUNCE_MS_ONBOARDING
-      : PLAYBACK_END_DEBOUNCE_MS_DEFAULT;
+  const echoGuardUntilMsRef = useRef(0);
+  const bargeInActiveUntilMsRef = useRef(0);
+  const playbackRmsEmaRef = useRef(0);
+  const micNoiseRmsEmaRef = useRef(0.01);
+  const bargeInConsecutiveFramesRef = useRef(0);
+  const echoGuardDropCountRef = useRef(0);
+  const bargeInTriggerCountRef = useRef(0);
+  const playbackEndDebounceMs = PLAYBACK_END_DEBOUNCE_MS_ONBOARDING;
   const logOnboardingAudio = useCallback(
     (event: string, payload: Record<string, unknown> = {}) => {
       if (!isOnboardingSession) {
@@ -461,7 +460,9 @@ export default function AssistantScreen() {
     }
     const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
     if (!backendUrl || !session?.access_token) {
-      setContinueError('Missing auth or backend configuration. Please try again.');
+      setContinueError(
+        'Missing auth or backend configuration. Please try again.'
+      );
       return;
     }
 
@@ -508,7 +509,12 @@ export default function AssistantScreen() {
     } finally {
       setIsVerifyingContinue(false);
     }
-  }, [isVerifyingContinue, reconnectOnboardingSession, router, session?.access_token]);
+  }, [
+    isVerifyingContinue,
+    reconnectOnboardingSession,
+    router,
+    session?.access_token,
+  ]);
 
   useEffect(() => {
     if (!isOnboardingSession) {
@@ -532,13 +538,13 @@ export default function AssistantScreen() {
       diagnostics.inputChunkSentCount = 0;
       diagnostics.lastInputChunkAtMs = null;
       diagnostics.maxInputChunkGapMs = 0;
-      onboardingEchoGuardUntilMsRef.current = 0;
-      onboardingBargeInActiveUntilMsRef.current = 0;
-      onboardingPlaybackRmsEmaRef.current = 0;
-      onboardingMicNoiseRmsEmaRef.current = 0.01;
-      onboardingBargeInConsecutiveFramesRef.current = 0;
-      onboardingEchoGuardDropCountRef.current = 0;
-      onboardingBargeInTriggerCountRef.current = 0;
+      echoGuardUntilMsRef.current = 0;
+      bargeInActiveUntilMsRef.current = 0;
+      playbackRmsEmaRef.current = 0;
+      micNoiseRmsEmaRef.current = 0.01;
+      bargeInConsecutiveFramesRef.current = 0;
+      echoGuardDropCountRef.current = 0;
+      bargeInTriggerCountRef.current = 0;
       logOnboardingAudio('ws_connected', {
         ws_connected_at_ms: diagnostics.wsConnectedAtMs,
       });
@@ -577,13 +583,13 @@ export default function AssistantScreen() {
       diagnostics.inputChunkSentCount = 0;
       diagnostics.lastInputChunkAtMs = null;
       diagnostics.maxInputChunkGapMs = 0;
-      onboardingEchoGuardUntilMsRef.current = 0;
-      onboardingBargeInActiveUntilMsRef.current = 0;
-      onboardingPlaybackRmsEmaRef.current = 0;
-      onboardingMicNoiseRmsEmaRef.current = 0.01;
-      onboardingBargeInConsecutiveFramesRef.current = 0;
-      onboardingEchoGuardDropCountRef.current = 0;
-      onboardingBargeInTriggerCountRef.current = 0;
+      echoGuardUntilMsRef.current = 0;
+      bargeInActiveUntilMsRef.current = 0;
+      playbackRmsEmaRef.current = 0;
+      micNoiseRmsEmaRef.current = 0.01;
+      bargeInConsecutiveFramesRef.current = 0;
+      echoGuardDropCountRef.current = 0;
+      bargeInTriggerCountRef.current = 0;
     }
   }, [isOnboardingSession, wsState.isConnected, logOnboardingAudio]);
 
@@ -595,8 +601,7 @@ export default function AssistantScreen() {
       wsState.isConnected &&
       !isRecording &&
       !hasAutoStartedRef.current &&
-      !isStoppingRecordingRef.current &&
-      (isOnboardingSession || !awaitingInitialGreeting);
+      !isStoppingRecordingRef.current;
     if (shouldAutoStart) {
       console.log('Auto-starting real-time recording...');
       startRecording()
@@ -623,7 +628,6 @@ export default function AssistantScreen() {
     }
   }, [
     wsState.isConnected,
-    awaitingInitialGreeting,
     isRecording,
     isOnboardingSession,
     logOnboardingAudio,
@@ -655,13 +659,13 @@ export default function AssistantScreen() {
       playbackTimerScheduleCountRef.current = 0;
       streamingTextRef.current = '';
       turnHasOutputTranscriptionRef.current = false;
-      onboardingEchoGuardUntilMsRef.current = 0;
-      onboardingBargeInActiveUntilMsRef.current = 0;
-      onboardingPlaybackRmsEmaRef.current = 0;
-      onboardingMicNoiseRmsEmaRef.current = 0.01;
-      onboardingBargeInConsecutiveFramesRef.current = 0;
-      onboardingEchoGuardDropCountRef.current = 0;
-      onboardingBargeInTriggerCountRef.current = 0;
+      echoGuardUntilMsRef.current = 0;
+      bargeInActiveUntilMsRef.current = 0;
+      playbackRmsEmaRef.current = 0;
+      micNoiseRmsEmaRef.current = 0.01;
+      bargeInConsecutiveFramesRef.current = 0;
+      echoGuardDropCountRef.current = 0;
+      bargeInTriggerCountRef.current = 0;
       hasAutoStartedRef.current = false;
       if (isRecording && !isStoppingRecordingRef.current) {
         isStoppingRecordingRef.current = true;
@@ -682,66 +686,65 @@ export default function AssistantScreen() {
         return;
       }
 
-      // Preserve existing behavior outside onboarding.
-      if (!isOnboardingSession) {
-        sendAudio(data);
-        return;
-      }
-
       const diagnostics = onboardingDiagnosticsRef.current;
       const now = Date.now();
       const micRms = pcm16RmsFromArrayBuffer(data);
-      diagnostics.inputChunkSeenCount += 1;
-      if (diagnostics.lastInputChunkAtMs !== null) {
-        const inputGap = now - diagnostics.lastInputChunkAtMs;
-        diagnostics.maxInputChunkGapMs = Math.max(
-          diagnostics.maxInputChunkGapMs,
-          inputGap
-        );
+      if (isOnboardingSession) {
+        diagnostics.inputChunkSeenCount += 1;
+        if (diagnostics.lastInputChunkAtMs !== null) {
+          const inputGap = now - diagnostics.lastInputChunkAtMs;
+          diagnostics.maxInputChunkGapMs = Math.max(
+            diagnostics.maxInputChunkGapMs,
+            inputGap
+          );
+        }
+        diagnostics.lastInputChunkAtMs = now;
       }
-      diagnostics.lastInputChunkAtMs = now;
 
-      const sendOnboardingMicChunk = () => {
+      const sendMicChunk = () => {
         sendAudio(data);
-        diagnostics.inputChunkSentCount += 1;
+        if (isOnboardingSession) {
+          diagnostics.inputChunkSentCount += 1;
+        }
       };
 
-      if (now < onboardingBargeInActiveUntilMsRef.current) {
-        sendOnboardingMicChunk();
+      if (now < bargeInActiveUntilMsRef.current) {
+        sendMicChunk();
       } else {
         const playbackGuardActive =
-          isPlaying || now < onboardingEchoGuardUntilMsRef.current;
+          isPlaying || now < echoGuardUntilMsRef.current;
         if (!playbackGuardActive) {
-          const noiseFloor = onboardingMicNoiseRmsEmaRef.current;
-          onboardingMicNoiseRmsEmaRef.current =
-            noiseFloor + ONBOARDING_NOISE_EMA_ALPHA * (micRms - noiseFloor);
-          onboardingBargeInConsecutiveFramesRef.current = 0;
-          sendOnboardingMicChunk();
+          const noiseFloor = micNoiseRmsEmaRef.current;
+          micNoiseRmsEmaRef.current =
+            noiseFloor + NOISE_EMA_ALPHA * (micRms - noiseFloor);
+          bargeInConsecutiveFramesRef.current = 0;
+          sendMicChunk();
         } else {
-          const playbackRms = onboardingPlaybackRmsEmaRef.current;
-          const noiseFloor = onboardingMicNoiseRmsEmaRef.current;
+          const playbackRms = playbackRmsEmaRef.current;
+          const noiseFloor = micNoiseRmsEmaRef.current;
           const threshold = Math.max(
-            ONBOARDING_BARGE_IN_ABS_RMS_THRESHOLD,
-            playbackRms * ONBOARDING_BARGE_IN_PLAYBACK_RMS_MULTIPLIER,
-            noiseFloor * ONBOARDING_MIC_NOISE_RMS_MULTIPLIER
+            BARGE_IN_ABS_RMS_THRESHOLD,
+            playbackRms * BARGE_IN_PLAYBACK_RMS_MULTIPLIER,
+            noiseFloor * MIC_NOISE_RMS_MULTIPLIER
           );
 
           if (micRms >= threshold) {
-            onboardingBargeInConsecutiveFramesRef.current += 1;
+            bargeInConsecutiveFramesRef.current += 1;
           } else {
-            onboardingBargeInConsecutiveFramesRef.current = 0;
+            bargeInConsecutiveFramesRef.current = 0;
           }
 
           if (
-            onboardingBargeInConsecutiveFramesRef.current >=
-            ONBOARDING_BARGE_IN_MIN_CONSECUTIVE_FRAMES
+            bargeInConsecutiveFramesRef.current >=
+            BARGE_IN_MIN_CONSECUTIVE_FRAMES
           ) {
-            onboardingBargeInConsecutiveFramesRef.current = 0;
-            onboardingBargeInTriggerCountRef.current += 1;
-            onboardingBargeInActiveUntilMsRef.current =
-              now + ONBOARDING_BARGE_IN_OPEN_WINDOW_MS;
-            onboardingEchoGuardUntilMsRef.current = now;
-            diagnostics.playbackStoppedOnInputCount += 1;
+            bargeInConsecutiveFramesRef.current = 0;
+            bargeInTriggerCountRef.current += 1;
+            bargeInActiveUntilMsRef.current = now + BARGE_IN_OPEN_WINDOW_MS;
+            echoGuardUntilMsRef.current = now;
+            if (isOnboardingSession) {
+              diagnostics.playbackStoppedOnInputCount += 1;
+            }
             if (endPlaybackTimerRef.current) {
               clearTimeout(endPlaybackTimerRef.current);
               endPlaybackTimerRef.current = null;
@@ -750,35 +753,40 @@ export default function AssistantScreen() {
             turnHasAudioChunkRef.current = false;
             streamingTextRef.current = '';
             setStreamingTranscription(null);
-            logOnboardingAudio('onboarding_barge_in_trigger', {
-              trigger_count: onboardingBargeInTriggerCountRef.current,
-              consecutive_frames: ONBOARDING_BARGE_IN_MIN_CONSECUTIVE_FRAMES,
-              mic_rms: micRms,
-              threshold_rms: threshold,
-              playback_rms_ema: playbackRms,
-              noise_floor_rms_ema: noiseFloor,
-              playback_stopped_on_input_count:
-                diagnostics.playbackStoppedOnInputCount,
-            });
-            void stopPlayback();
-            sendOnboardingMicChunk();
-          } else {
-            onboardingEchoGuardDropCountRef.current += 1;
-            if (onboardingEchoGuardDropCountRef.current % 40 === 0) {
-              logOnboardingAudio('onboarding_echo_guard_drop', {
-                dropped_chunk_count: onboardingEchoGuardDropCountRef.current,
+            if (isOnboardingSession) {
+              logOnboardingAudio('onboarding_barge_in_trigger', {
+                trigger_count: bargeInTriggerCountRef.current,
+                consecutive_frames: BARGE_IN_MIN_CONSECUTIVE_FRAMES,
                 mic_rms: micRms,
                 threshold_rms: threshold,
                 playback_rms_ema: playbackRms,
                 noise_floor_rms_ema: noiseFloor,
-                barge_in_frames: onboardingBargeInConsecutiveFramesRef.current,
+                playback_stopped_on_input_count:
+                  diagnostics.playbackStoppedOnInputCount,
+              });
+            }
+            void stopPlayback();
+            sendMicChunk();
+          } else {
+            echoGuardDropCountRef.current += 1;
+            if (
+              isOnboardingSession &&
+              echoGuardDropCountRef.current % 40 === 0
+            ) {
+              logOnboardingAudio('onboarding_echo_guard_drop', {
+                dropped_chunk_count: echoGuardDropCountRef.current,
+                mic_rms: micRms,
+                threshold_rms: threshold,
+                playback_rms_ema: playbackRms,
+                noise_floor_rms_ema: noiseFloor,
+                barge_in_frames: bargeInConsecutiveFramesRef.current,
               });
             }
           }
         }
       }
 
-      if (diagnostics.inputChunkSeenCount % 100 === 0) {
+      if (isOnboardingSession && diagnostics.inputChunkSeenCount % 100 === 0) {
         logOnboardingAudio('input_uplink_flow', {
           input_chunk_seen_count: diagnostics.inputChunkSeenCount,
           input_chunk_sent_count: diagnostics.inputChunkSentCount,
@@ -803,25 +811,23 @@ export default function AssistantScreen() {
       // Keep audio output active across voice/chat/ui views.
       // View mode should affect layout, not whether the user hears the assistant.
       if (wsState.isConnected) {
-        let now = 0;
+        const now = Date.now();
         let gapMs: number | null = null;
         outputAudioChunkCountRef.current += 1;
         turnHasAudioChunkRef.current = true;
+        bargeInActiveUntilMsRef.current = 0;
+        echoGuardUntilMsRef.current = now + ECHO_GUARD_TAIL_MS;
+        bargeInConsecutiveFramesRef.current = 0;
+        const outputRms =
+          typeof audioData === 'string'
+            ? pcm16RmsFromBase64(audioData)
+            : pcm16RmsFromArrayBuffer(audioData);
+        const currentPlaybackRms = playbackRmsEmaRef.current;
+        playbackRmsEmaRef.current =
+          currentPlaybackRms +
+          SIGNAL_EMA_ALPHA * (outputRms - currentPlaybackRms);
         if (isOnboardingSession) {
           const diagnostics = onboardingDiagnosticsRef.current;
-          now = Date.now();
-          onboardingBargeInActiveUntilMsRef.current = 0;
-          onboardingEchoGuardUntilMsRef.current =
-            now + ONBOARDING_ECHO_GUARD_TAIL_MS;
-          onboardingBargeInConsecutiveFramesRef.current = 0;
-          const outputRms =
-            typeof audioData === 'string'
-              ? pcm16RmsFromBase64(audioData)
-              : pcm16RmsFromArrayBuffer(audioData);
-          const currentPlaybackRms = onboardingPlaybackRmsEmaRef.current;
-          onboardingPlaybackRmsEmaRef.current =
-            currentPlaybackRms +
-            ONBOARDING_SIGNAL_EMA_ALPHA * (outputRms - currentPlaybackRms);
           if (diagnostics.currentTurnChunkCount === 0) {
             diagnostics.outputTurnIndex += 1;
             logOnboardingAudio('output_turn_started', {
@@ -952,7 +958,8 @@ export default function AssistantScreen() {
         setOnboardingDoneVisible(false);
         setContinueError(null);
         setCompletionErrorMessage(
-          event.message || 'Onboarding is not complete yet. Please answer the missing fields.'
+          event.message ||
+            'Onboarding is not complete yet. Please answer the missing fields.'
         );
         setMissingFields(normalizedMissingFields);
         return;
@@ -1132,7 +1139,7 @@ export default function AssistantScreen() {
                 : Date.now() - diagnostics.lastOutputChunkAtMs,
           });
         }
-        if (!isOnboardingSession || turnHasAudioChunkRef.current) {
+        if (turnHasAudioChunkRef.current) {
           schedulePlaybackEnd();
         } else {
           if (isOnboardingSession) {
@@ -1338,10 +1345,17 @@ export default function AssistantScreen() {
         {isOnboardingSession &&
         !onboardingDoneVisible &&
         (completionErrorMessage || continueError) ? (
-          <View style={styles.onboardingAlert} testID="onboarding-failure-panel">
-            <Text style={styles.onboardingAlertTitle}>Onboarding needs one more step</Text>
+          <View
+            style={styles.onboardingAlert}
+            testID="onboarding-failure-panel"
+          >
+            <Text style={styles.onboardingAlertTitle}>
+              Onboarding needs one more step
+            </Text>
             {completionErrorMessage ? (
-              <Text style={styles.onboardingAlertText}>{completionErrorMessage}</Text>
+              <Text style={styles.onboardingAlertText}>
+                {completionErrorMessage}
+              </Text>
             ) : null}
             {missingFields.length > 0 ? (
               <Text style={styles.onboardingAlertText}>
@@ -1371,9 +1385,14 @@ export default function AssistantScreen() {
         />
 
         {onboardingDoneVisible ? (
-          <View style={styles.onboardingDoneOverlay} testID="onboarding-done-panel">
+          <View
+            style={styles.onboardingDoneOverlay}
+            testID="onboarding-done-panel"
+          >
             <View style={styles.onboardingDoneCard}>
-              <Text style={styles.onboardingDoneTitle}>Onboarding complete</Text>
+              <Text style={styles.onboardingDoneTitle}>
+                Onboarding complete
+              </Text>
               <Text style={styles.onboardingDoneText}>
                 Your setup is saved. Tap Continue to enter the main assistant.
               </Text>
@@ -1389,7 +1408,9 @@ export default function AssistantScreen() {
                 </Text>
               </TouchableOpacity>
               {continueError ? (
-                <Text style={styles.onboardingDoneErrorText}>{continueError}</Text>
+                <Text style={styles.onboardingDoneErrorText}>
+                  {continueError}
+                </Text>
               ) : null}
             </View>
           </View>

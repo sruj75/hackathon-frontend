@@ -220,7 +220,7 @@ describe('Assistant screen integration', () => {
     });
   });
 
-  it('keeps non-onboarding auto-start behavior gated until turnComplete', async () => {
+  it('starts recording immediately for main when WebSocket is connected', async () => {
     mockWsState = { isConnected: true, isConnecting: false, error: null };
     mockUseWebSocketAgent.mockReturnValue({
       state: mockWsState,
@@ -234,13 +234,6 @@ describe('Assistant screen integration', () => {
     });
 
     render(<AssistantScreen />);
-
-    expect(mockStartRecording).not.toHaveBeenCalled();
-    expect(eventHandler).not.toBeNull();
-
-    act(() => {
-      eventHandler?.({ turnComplete: true });
-    });
 
     await waitFor(() => {
       expect(mockStartRecording).toHaveBeenCalledTimes(1);
@@ -300,9 +293,82 @@ describe('Assistant screen integration', () => {
     expect(mockSendAudio).not.toHaveBeenCalled();
   });
 
+  it('drops main mic chunks during playback echo guard', () => {
+    mockParams = {
+      trigger_type: 'checkin',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+    expect(audioHandler).not.toBeNull();
+    expect(audioDataHandler).not.toBeNull();
+
+    act(() => {
+      audioHandler?.('AQID', 'audio/pcm;rate=16000');
+    });
+    act(() => {
+      audioDataHandler?.(createPcm16Buffer(500));
+    });
+
+    expect(mockSendAudio).not.toHaveBeenCalled();
+  });
+
   it('opens onboarding barge-in path after strong speech during playback', async () => {
     mockParams = {
       trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+    expect(audioHandler).not.toBeNull();
+    expect(audioDataHandler).not.toBeNull();
+
+    act(() => {
+      audioHandler?.('AQID', 'audio/pcm;rate=16000');
+    });
+
+    const strongSpeech = createPcm16Buffer(12000);
+    act(() => {
+      audioDataHandler?.(strongSpeech);
+      audioDataHandler?.(strongSpeech);
+      audioDataHandler?.(strongSpeech);
+      audioDataHandler?.(strongSpeech);
+    });
+
+    await waitFor(() => {
+      expect(mockStopPlayback).toHaveBeenCalledTimes(1);
+      expect(mockSendAudio).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      audioDataHandler?.(strongSpeech);
+    });
+    expect(mockSendAudio).toHaveBeenCalledTimes(2);
+  });
+
+  it('opens main barge-in path after strong speech during playback', async () => {
+    mockParams = {
+      trigger_type: 'checkin',
     };
     mockWsState = { isConnected: true, isConnecting: false, error: null };
     mockUseWebSocketAgent.mockReturnValue({
