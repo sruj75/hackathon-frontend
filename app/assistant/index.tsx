@@ -38,6 +38,8 @@ interface Transcription {
 }
 
 type ViewMode = 'voice' | 'chat' | 'ui';
+const PLAYBACK_END_DEBOUNCE_MS_DEFAULT = 320;
+const PLAYBACK_END_DEBOUNCE_MS_ONBOARDING = 900;
 
 export default function AssistantScreen() {
   const router = useRouter();
@@ -167,6 +169,10 @@ export default function AssistantScreen() {
   const turnHasOutputTranscriptionRef = useRef(false);
   const hasPostOnboardingHandoffRef = useRef(false);
   const pendingPostOnboardingReconnectRef = useRef(false);
+  const playbackEndDebounceMs =
+    triggerType === 'onboarding'
+      ? PLAYBACK_END_DEBOUNCE_MS_ONBOARDING
+      : PLAYBACK_END_DEBOUNCE_MS_DEFAULT;
 
   // Streaming state for accumulating partial responses
   const [streamingTranscription, setStreamingTranscription] = useState<{
@@ -194,8 +200,8 @@ export default function AssistantScreen() {
       void endPlayback();
       pendingTurnCompleteRef.current = false;
       endPlaybackTimerRef.current = null;
-    }, 220);
-  }, [endPlayback]);
+    }, playbackEndDebounceMs);
+  }, [endPlayback, playbackEndDebounceMs]);
 
   const mergeStreamingText = useCallback(
     (current: string, incoming: string) => {
