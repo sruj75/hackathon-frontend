@@ -162,6 +162,10 @@ export default function AssistantScreen() {
     null
   );
   const pendingTurnCompleteRef = useRef(false);
+  const turnHasAudioChunkRef = useRef(false);
+  const outputAudioChunkCountRef = useRef(0);
+  const turnCompleteCountRef = useRef(0);
+  const playbackTimerScheduleCountRef = useRef(0);
   const streamingTextRef = useRef('');
   const lastAgentMessageRef = useRef<{
     text: string;
@@ -170,10 +174,46 @@ export default function AssistantScreen() {
   const turnHasOutputTranscriptionRef = useRef(false);
   const hasPostOnboardingHandoffRef = useRef(false);
   const pendingPostOnboardingReconnectRef = useRef(false);
+  const onboardingDiagnosticsRef = useRef({
+    wsConnectedAtMs: null as number | null,
+    recordingStartedAtMs: null as number | null,
+    firstOutputAudioAtMs: null as number | null,
+    firstInputTranscriptionAtMs: null as number | null,
+    interruptionCount: 0,
+    outputTurnIndex: 0,
+    currentTurnChunkCount: 0,
+    lastOutputChunkAtMs: null as number | null,
+    outputGapWarningCount: 0,
+    outputUnderrunWarningCount: 0,
+    maxOutputUnderrunMs: 0,
+    playbackStoppedOnInputCount: 0,
+    inputChunkSeenCount: 0,
+    inputChunkSentCount: 0,
+    lastInputChunkAtMs: null as number | null,
+    maxInputChunkGapMs: 0,
+  });
   const playbackEndDebounceMs =
     triggerType === 'onboarding'
       ? PLAYBACK_END_DEBOUNCE_MS_ONBOARDING
       : PLAYBACK_END_DEBOUNCE_MS_DEFAULT;
+  const logOnboardingAudio = useCallback(
+    (event: string, payload: Record<string, unknown> = {}) => {
+      if (!isOnboardingSession) {
+        return;
+      }
+      const diagnostics = onboardingDiagnosticsRef.current;
+      const now = Date.now();
+      console.log('[ONBOARDING-AUDIO]', event, {
+        at_ms: now,
+        since_ws_connected_ms:
+          diagnostics.wsConnectedAtMs === null
+            ? null
+            : now - diagnostics.wsConnectedAtMs,
+        ...payload,
+      });
+    },
+    [isOnboardingSession]
+  );
 
   // Streaming state for accumulating partial responses
   const [streamingTranscription, setStreamingTranscription] = useState<{
@@ -194,15 +234,33 @@ export default function AssistantScreen() {
   }, []);
 
   const schedulePlaybackEnd = useCallback(() => {
+    const scheduleId = ++playbackTimerScheduleCountRef.current;
     if (endPlaybackTimerRef.current) {
       clearTimeout(endPlaybackTimerRef.current);
     }
+    if (isOnboardingSession) {
+      logOnboardingAudio('schedule_playback_end', {
+        schedule_id: scheduleId,
+        debounce_ms: playbackEndDebounceMs,
+        pending_turn_complete: pendingTurnCompleteRef.current,
+        turn_has_audio_chunk: turnHasAudioChunkRef.current,
+        turn_complete_count: turnCompleteCountRef.current,
+        output_audio_chunk_count: outputAudioChunkCountRef.current,
+      });
+    }
     endPlaybackTimerRef.current = setTimeout(() => {
+      if (isOnboardingSession) {
+        logOnboardingAudio('fire_playback_end', {
+          schedule_id: scheduleId,
+          turn_has_audio_chunk: turnHasAudioChunkRef.current,
+          output_audio_chunk_count: outputAudioChunkCountRef.current,
+        });
+      }
       void endPlayback();
       pendingTurnCompleteRef.current = false;
       endPlaybackTimerRef.current = null;
     }, playbackEndDebounceMs);
-  }, [endPlayback, playbackEndDebounceMs]);
+  }, [endPlayback, playbackEndDebounceMs, isOnboardingSession, logOnboardingAudio]);
 
   const mergeStreamingText = useCallback(
     (current: string, incoming: string) => {
@@ -318,22 +376,103 @@ export default function AssistantScreen() {
     });
   }, [connect, wsState.isConnected, wsState.isConnecting]);
 
+  useEffect(() => {
+    if (!isOnboardingSession) {
+      return;
+    }
+    const diagnostics = onboardingDiagnosticsRef.current;
+    if (wsState.isConnected && diagnostics.wsConnectedAtMs === null) {
+      diagnostics.wsConnectedAtMs = Date.now();
+      diagnostics.recordingStartedAtMs = null;
+      diagnostics.firstOutputAudioAtMs = null;
+      diagnostics.firstInputTranscriptionAtMs = null;
+      diagnostics.interruptionCount = 0;
+      diagnostics.outputTurnIndex = 0;
+      diagnostics.currentTurnChunkCount = 0;
+      diagnostics.lastOutputChunkAtMs = null;
+      diagnostics.outputGapWarningCount = 0;
+      diagnostics.outputUnderrunWarningCount = 0;
+      diagnostics.maxOutputUnderrunMs = 0;
+      diagnostics.playbackStoppedOnInputCount = 0;
+      diagnostics.inputChunkSeenCount = 0;
+      diagnostics.inputChunkSentCount = 0;
+      diagnostics.lastInputChunkAtMs = null;
+      diagnostics.maxInputChunkGapMs = 0;
+      logOnboardingAudio('ws_connected', {
+        ws_connected_at_ms: diagnostics.wsConnectedAtMs,
+      });
+    }
+    if (!wsState.isConnected && diagnostics.wsConnectedAtMs !== null) {
+      logOnboardingAudio('session_summary', {
+        ws_connected_at_ms: diagnostics.wsConnectedAtMs,
+        recording_started_at_ms: diagnostics.recordingStartedAtMs,
+        first_output_audio_at_ms: diagnostics.firstOutputAudioAtMs,
+        first_input_transcription_at_ms: diagnostics.firstInputTranscriptionAtMs,
+        interruption_count: diagnostics.interruptionCount,
+        output_turn_count: diagnostics.outputTurnIndex,
+        output_gap_warning_count: diagnostics.outputGapWarningCount,
+        output_underrun_warning_count: diagnostics.outputUnderrunWarningCount,
+        max_output_underrun_ms: diagnostics.maxOutputUnderrunMs,
+        playback_stopped_on_input_count: diagnostics.playbackStoppedOnInputCount,
+        input_chunk_seen_count: diagnostics.inputChunkSeenCount,
+        input_chunk_sent_count: diagnostics.inputChunkSentCount,
+        max_input_chunk_gap_ms: diagnostics.maxInputChunkGapMs,
+      });
+      diagnostics.wsConnectedAtMs = null;
+      diagnostics.recordingStartedAtMs = null;
+      diagnostics.firstOutputAudioAtMs = null;
+      diagnostics.firstInputTranscriptionAtMs = null;
+      diagnostics.interruptionCount = 0;
+      diagnostics.outputTurnIndex = 0;
+      diagnostics.currentTurnChunkCount = 0;
+      diagnostics.lastOutputChunkAtMs = null;
+      diagnostics.outputGapWarningCount = 0;
+      diagnostics.outputUnderrunWarningCount = 0;
+      diagnostics.maxOutputUnderrunMs = 0;
+      diagnostics.playbackStoppedOnInputCount = 0;
+      diagnostics.inputChunkSeenCount = 0;
+      diagnostics.inputChunkSentCount = 0;
+      diagnostics.lastInputChunkAtMs = null;
+      diagnostics.maxInputChunkGapMs = 0;
+    }
+  }, [
+    isOnboardingSession,
+    wsState.isConnected,
+    logOnboardingAudio,
+  ]);
+
   // Auto-start recording when WebSocket connects for real-time streaming
   const hasAutoStartedRef = React.useRef(false);
   const isStoppingRecordingRef = React.useRef(false);
   useEffect(() => {
-    if (
+    const shouldAutoStart =
       wsState.isConnected &&
-      !awaitingInitialGreeting &&
       !isRecording &&
       !hasAutoStartedRef.current &&
-      !isStoppingRecordingRef.current
+      !isStoppingRecordingRef.current &&
+      (isOnboardingSession || !awaitingInitialGreeting);
+    if (
+      shouldAutoStart
     ) {
       console.log('Auto-starting real-time recording...');
       startRecording()
         .then(() => {
           setIsMicEnabled(true);
           hasAutoStartedRef.current = true;
+          if (isOnboardingSession) {
+            const diagnostics = onboardingDiagnosticsRef.current;
+            if (diagnostics.recordingStartedAtMs === null) {
+              diagnostics.recordingStartedAtMs = Date.now();
+              logOnboardingAudio('recording_started', {
+                recording_started_at_ms: diagnostics.recordingStartedAtMs,
+                since_ws_connected_ms:
+                  diagnostics.wsConnectedAtMs === null
+                    ? null
+                    : diagnostics.recordingStartedAtMs -
+                      diagnostics.wsConnectedAtMs,
+              });
+            }
+          }
           console.log('Real-time audio streaming active');
         })
         .catch((err) => console.error('Failed to start recording:', err));
@@ -342,17 +481,34 @@ export default function AssistantScreen() {
     wsState.isConnected,
     awaitingInitialGreeting,
     isRecording,
+    isOnboardingSession,
+    logOnboardingAudio,
     startRecording,
   ]);
 
   // Ensure recording is torn down when WebSocket disconnects.
   useEffect(() => {
     if (!wsState.isConnected) {
+      if (isOnboardingSession) {
+        console.log('[ONBOARDING-AUDIO] ws_disconnected_summary', {
+          turn_complete_count: turnCompleteCountRef.current,
+          output_audio_chunk_count: outputAudioChunkCountRef.current,
+          playback_timer_schedule_count: playbackTimerScheduleCountRef.current,
+          input_chunk_seen_count:
+            onboardingDiagnosticsRef.current.inputChunkSeenCount,
+          input_chunk_sent_count:
+            onboardingDiagnosticsRef.current.inputChunkSentCount,
+        });
+      }
       if (endPlaybackTimerRef.current) {
         clearTimeout(endPlaybackTimerRef.current);
         endPlaybackTimerRef.current = null;
       }
       pendingTurnCompleteRef.current = false;
+      turnHasAudioChunkRef.current = false;
+      outputAudioChunkCountRef.current = 0;
+      turnCompleteCountRef.current = 0;
+      playbackTimerScheduleCountRef.current = 0;
       streamingTextRef.current = '';
       turnHasOutputTranscriptionRef.current = false;
       hasAutoStartedRef.current = false;
@@ -366,19 +522,59 @@ export default function AssistantScreen() {
       }
       setIsMicEnabled(false);
     }
-  }, [wsState.isConnected, isRecording, stopRecording]);
+  }, [
+    wsState.isConnected,
+    isRecording,
+    stopRecording,
+    isOnboardingSession,
+  ]);
 
   // Set up audio data callback - stream audio chunks to WebSocket in real-time
   useEffect(() => {
     const unsubscribe = onAudioData((data) => {
-      // Full duplex for true barge-in: keep sending mic audio even while assistant is speaking.
-      // iOS voiceChat mode in expo-realtime-audio provides native echo management.
-      if (wsState.isConnected) {
+      if (!wsState.isConnected) {
+        return;
+      }
+
+      // Preserve existing behavior outside onboarding.
+      if (!isOnboardingSession) {
         sendAudio(data);
+        return;
+      }
+
+      const diagnostics = onboardingDiagnosticsRef.current;
+      const now = Date.now();
+      diagnostics.inputChunkSeenCount += 1;
+      if (diagnostics.lastInputChunkAtMs !== null) {
+        const inputGap = now - diagnostics.lastInputChunkAtMs;
+        diagnostics.maxInputChunkGapMs = Math.max(
+          diagnostics.maxInputChunkGapMs,
+          inputGap
+        );
+      }
+      diagnostics.lastInputChunkAtMs = now;
+
+      // Onboarding full-duplex: send each captured chunk immediately.
+      sendAudio(data);
+      diagnostics.inputChunkSentCount += 1;
+
+      if (diagnostics.inputChunkSeenCount % 100 === 0) {
+        logOnboardingAudio('input_uplink_flow', {
+          input_chunk_seen_count: diagnostics.inputChunkSeenCount,
+          input_chunk_sent_count: diagnostics.inputChunkSentCount,
+          is_playing: isPlaying,
+        });
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onAudioData, sendAudio, wsState.isConnected]);
+  }, [
+    onAudioData,
+    sendAudio,
+    wsState.isConnected,
+    isOnboardingSession,
+    isPlaying,
+    logOnboardingAudio,
+  ]);
 
   // Set up audio playback callback - play audio received from server
   useEffect(() => {
@@ -386,15 +582,90 @@ export default function AssistantScreen() {
       // Keep audio output active across voice/chat/ui views.
       // View mode should affect layout, not whether the user hears the assistant.
       if (wsState.isConnected) {
-        playAudio(audioData, mimeType);
-      }
-      // Once turnComplete is seen, keep extending the end timer as chunks arrive.
-      if (pendingTurnCompleteRef.current) {
-        schedulePlaybackEnd();
+        let now = 0;
+        let gapMs: number | null = null;
+        outputAudioChunkCountRef.current += 1;
+        turnHasAudioChunkRef.current = true;
+        if (isOnboardingSession) {
+          const diagnostics = onboardingDiagnosticsRef.current;
+          now = Date.now();
+          if (diagnostics.currentTurnChunkCount === 0) {
+            diagnostics.outputTurnIndex += 1;
+            logOnboardingAudio('output_turn_started', {
+              output_turn_index: diagnostics.outputTurnIndex,
+              turn_complete_count: turnCompleteCountRef.current,
+              pending_turn_complete: pendingTurnCompleteRef.current,
+            });
+          }
+          diagnostics.currentTurnChunkCount += 1;
+          gapMs =
+            diagnostics.lastOutputChunkAtMs === null
+              ? null
+              : now - diagnostics.lastOutputChunkAtMs;
+          diagnostics.lastOutputChunkAtMs = now;
+          const isGapWarning = gapMs !== null && gapMs > 260;
+          const gapOverChunkMs = gapMs === null ? null : gapMs - 40;
+          const isUnderrunWarning =
+            gapOverChunkMs !== null && gapOverChunkMs > 160;
+          if (isUnderrunWarning) {
+            diagnostics.outputUnderrunWarningCount += 1;
+            diagnostics.maxOutputUnderrunMs = Math.max(
+              diagnostics.maxOutputUnderrunMs,
+              gapOverChunkMs
+            );
+          }
+          const shouldSampleLog =
+            diagnostics.currentTurnChunkCount === 1 ||
+            diagnostics.currentTurnChunkCount % 40 === 0 ||
+            (gapMs !== null && gapMs > 360);
+          if (isGapWarning) {
+            diagnostics.outputGapWarningCount += 1;
+          }
+          if (shouldSampleLog) {
+            logOnboardingAudio('output_audio_chunk', {
+              output_turn_index: diagnostics.outputTurnIndex,
+              turn_chunk_index: diagnostics.currentTurnChunkCount,
+              chunk_count_total: outputAudioChunkCountRef.current,
+              inter_chunk_gap_ms: gapMs,
+              gap_warning: isGapWarning,
+              gap_over_chunk_ms: gapOverChunkMs,
+              underrun_warning: isUnderrunWarning,
+              mime_type: mimeType || null,
+              pending_turn_complete: pendingTurnCompleteRef.current,
+              turn_complete_count: turnCompleteCountRef.current,
+            });
+          }
+          if (diagnostics.firstOutputAudioAtMs === null) {
+            diagnostics.firstOutputAudioAtMs = now || Date.now();
+            logOnboardingAudio('first_output_audio_chunk', {
+              first_output_audio_at_ms: diagnostics.firstOutputAudioAtMs,
+              since_ws_connected_ms:
+                diagnostics.wsConnectedAtMs === null
+                  ? null
+                  : diagnostics.firstOutputAudioAtMs - diagnostics.wsConnectedAtMs,
+              since_recording_started_ms:
+                diagnostics.recordingStartedAtMs === null
+                  ? null
+                  : diagnostics.firstOutputAudioAtMs -
+                    diagnostics.recordingStartedAtMs,
+            });
+          }
+        }
+        void playAudio(audioData, mimeType);
+        if (pendingTurnCompleteRef.current) {
+          schedulePlaybackEnd();
+        }
       }
     });
     return unsubscribe; // Cleanup to prevent duplicate listeners
-  }, [onAudio, playAudio, schedulePlaybackEnd, wsState.isConnected]);
+  }, [
+    onAudio,
+    playAudio,
+    schedulePlaybackEnd,
+    wsState.isConnected,
+    isOnboardingSession,
+    logOnboardingAudio,
+  ]);
 
   // Handle UI components from backend
   useEffect(() => {
@@ -441,11 +712,21 @@ export default function AssistantScreen() {
         console.log(
           '[CHAT] Agent interrupted, clearing streaming transcription'
         );
+        if (isOnboardingSession) {
+          const diagnostics = onboardingDiagnosticsRef.current;
+          diagnostics.interruptionCount += 1;
+          logOnboardingAudio('interruption', {
+            interruption_count: diagnostics.interruptionCount,
+            turn_complete_count: turnCompleteCountRef.current,
+            output_turn_index: diagnostics.outputTurnIndex,
+          });
+        }
         if (endPlaybackTimerRef.current) {
           clearTimeout(endPlaybackTimerRef.current);
           endPlaybackTimerRef.current = null;
         }
         pendingTurnCompleteRef.current = false;
+        turnHasAudioChunkRef.current = false;
         streamingTextRef.current = '';
         turnHasOutputTranscriptionRef.current = false;
         void stopPlayback();
@@ -454,25 +735,65 @@ export default function AssistantScreen() {
 
       // Handle input transcription (user speech)
       if (event.serverContent?.inputTranscription?.text) {
-        const ignoreOnboardingPlaybackBargeIn =
-          isOnboardingSession && isPlaying;
+        if (isOnboardingSession) {
+          const diagnostics = onboardingDiagnosticsRef.current;
+          logOnboardingAudio('input_transcription', {
+            text_length: event.serverContent.inputTranscription.text.length,
+            is_playing: isPlaying,
+            turn_complete_count: turnCompleteCountRef.current,
+            output_turn_index: diagnostics.outputTurnIndex,
+            pending_turn_complete: pendingTurnCompleteRef.current,
+            ms_since_last_output_chunk:
+              diagnostics.lastOutputChunkAtMs === null
+                ? null
+                : Date.now() - diagnostics.lastOutputChunkAtMs,
+          });
+          if (diagnostics.firstInputTranscriptionAtMs === null) {
+            diagnostics.firstInputTranscriptionAtMs = Date.now();
+            logOnboardingAudio('first_input_transcription', {
+              first_input_transcription_at_ms:
+                diagnostics.firstInputTranscriptionAtMs,
+              since_ws_connected_ms:
+                diagnostics.wsConnectedAtMs === null
+                  ? null
+                  : diagnostics.firstInputTranscriptionAtMs -
+                    diagnostics.wsConnectedAtMs,
+              since_recording_started_ms:
+                diagnostics.recordingStartedAtMs === null
+                  ? null
+                  : diagnostics.firstInputTranscriptionAtMs -
+                    diagnostics.recordingStartedAtMs,
+            });
+          }
+        }
         // If user starts talking, stop assistant playback immediately for barge-in UX.
-        if (isPlaying && !ignoreOnboardingPlaybackBargeIn) {
+        if (isPlaying) {
+          if (isOnboardingSession) {
+            const diagnostics = onboardingDiagnosticsRef.current;
+            diagnostics.playbackStoppedOnInputCount += 1;
+            logOnboardingAudio('stop_playback_on_input', {
+              playback_stopped_on_input_count:
+                diagnostics.playbackStoppedOnInputCount,
+              ms_since_last_output_chunk:
+                diagnostics.lastOutputChunkAtMs === null
+                  ? null
+                  : Date.now() - diagnostics.lastOutputChunkAtMs,
+            });
+          }
           if (endPlaybackTimerRef.current) {
             clearTimeout(endPlaybackTimerRef.current);
             endPlaybackTimerRef.current = null;
           }
           pendingTurnCompleteRef.current = false;
+          turnHasAudioChunkRef.current = false;
           streamingTextRef.current = '';
           setStreamingTranscription(null);
           void stopPlayback();
         }
-        if (!ignoreOnboardingPlaybackBargeIn) {
-          addTranscription(
-            transcriptionUserId,
-            event.serverContent.inputTranscription.text
-          );
-        }
+        addTranscription(
+          transcriptionUserId,
+          event.serverContent.inputTranscription.text
+        );
       }
 
       // Handle output transcription (agent speech) - already complete
@@ -565,10 +886,33 @@ export default function AssistantScreen() {
 
       // Handle turn completion - finalize streaming transcription
       if (event.turnComplete) {
+        turnCompleteCountRef.current += 1;
         console.log('[CHAT] Turn complete, finalizing streaming transcription');
         setAwaitingInitialGreeting(false);
         pendingTurnCompleteRef.current = true;
-        schedulePlaybackEnd();
+        if (isOnboardingSession) {
+          const diagnostics = onboardingDiagnosticsRef.current;
+          logOnboardingAudio('turn_complete', {
+            turn_complete_count: turnCompleteCountRef.current,
+            turn_has_audio_chunk: turnHasAudioChunkRef.current,
+            output_audio_chunk_count: outputAudioChunkCountRef.current,
+            has_streaming_text: Boolean(streamingTextRef.current),
+            has_output_transcription: turnHasOutputTranscriptionRef.current,
+            output_turn_index: diagnostics.outputTurnIndex,
+            turn_chunk_count: diagnostics.currentTurnChunkCount,
+            ms_since_last_output_chunk:
+              diagnostics.lastOutputChunkAtMs === null
+                ? null
+                : Date.now() - diagnostics.lastOutputChunkAtMs,
+          });
+        }
+        if (!isOnboardingSession || turnHasAudioChunkRef.current) {
+          schedulePlaybackEnd();
+        } else {
+          if (isOnboardingSession) {
+            logOnboardingAudio('skip_end_playback_no_audio_turn');
+          }
+        }
         if (
           streamingTextRef.current &&
           !turnHasOutputTranscriptionRef.current
@@ -577,6 +921,10 @@ export default function AssistantScreen() {
         }
         streamingTextRef.current = '';
         turnHasOutputTranscriptionRef.current = false;
+        turnHasAudioChunkRef.current = false;
+        if (isOnboardingSession) {
+          onboardingDiagnosticsRef.current.currentTurnChunkCount = 0;
+        }
         setStreamingTranscription(null);
       }
     });
@@ -593,6 +941,7 @@ export default function AssistantScreen() {
     transcriptionUserId,
     handoffToMainAgent,
     triggerType,
+    logOnboardingAudio,
   ]);
 
   // Control callbacks

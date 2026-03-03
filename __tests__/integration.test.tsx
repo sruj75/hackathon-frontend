@@ -1,13 +1,32 @@
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { act, render, waitFor } from '@testing-library/react-native';
 
 const mockRouterBack = jest.fn();
 const mockConnect = jest.fn();
 const mockDisconnect = jest.fn();
 const mockSendAudio = jest.fn();
 const mockSendText = jest.fn();
-const mockOnEvent = jest.fn(() => jest.fn());
-const mockOnAudio = jest.fn(() => jest.fn());
+let eventHandler: ((event: any) => void) | null = null;
+let audioHandler: ((audioData: ArrayBuffer | string, mimeType?: string) => void) | null =
+  null;
+const mockOnEvent = jest.fn((callback: (event: any) => void) => {
+  eventHandler = callback;
+  return jest.fn(() => {
+    if (eventHandler === callback) {
+      eventHandler = null;
+    }
+  });
+});
+const mockOnAudio = jest.fn(
+  (callback: (audioData: ArrayBuffer | string, mimeType?: string) => void) => {
+    audioHandler = callback;
+    return jest.fn(() => {
+      if (audioHandler === callback) {
+        audioHandler = null;
+      }
+    });
+  }
+);
 const mockOnUIComponent = jest.fn(() => jest.fn());
 const mockStartRecording = jest.fn(async () => undefined);
 const mockStopRecording = jest.fn(async () => undefined);
@@ -16,6 +35,8 @@ const mockPlayAudio = jest.fn();
 const mockEndPlayback = jest.fn(async () => undefined);
 const mockStopPlayback = jest.fn(async () => undefined);
 const mockUseWebSocketAgent = jest.fn();
+let mockIsPlaying = false;
+let mockWsState = { isConnected: false, isConnecting: false, error: null as string | null };
 
 let mockParams: Record<string, string | string[]> = {};
 let mockSession: { access_token: string } | null = { access_token: 'jwt_test' };
@@ -47,7 +68,7 @@ jest.mock('@/hooks/useAudio', () => ({
     onAudioData: mockOnAudioData,
   }),
   useAudioPlayback: () => ({
-    isPlaying: false,
+    isPlaying: mockIsPlaying,
     playAudio: mockPlayAudio,
     endPlayback: mockEndPlayback,
     stopPlayback: mockStopPlayback,
@@ -76,9 +97,13 @@ describe('Assistant screen integration', () => {
     mockParams = {};
     mockSession = { access_token: 'jwt_test' };
     mockUser = { id: 'user_test' };
+    eventHandler = null;
+    audioHandler = null;
+    mockIsPlaying = false;
+    mockWsState = { isConnected: false, isConnecting: false, error: null };
 
     mockUseWebSocketAgent.mockReturnValue({
-      state: { isConnected: false, isConnecting: false, error: null },
+      state: mockWsState,
       connect: mockConnect,
       disconnect: mockDisconnect,
       sendAudio: mockSendAudio,
@@ -87,6 +112,10 @@ describe('Assistant screen integration', () => {
       onAudio: mockOnAudio,
       onUIComponent: mockOnUIComponent,
     });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   afterAll(() => {
@@ -140,5 +169,181 @@ describe('Assistant screen integration', () => {
     const { unmount } = render(<AssistantScreen />);
     unmount();
     expect(mockDisconnect).toHaveBeenCalled();
+  });
+
+  it('starts recording immediately for onboarding when WebSocket is connected', async () => {
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+
+    await waitFor(() => {
+      expect(mockStartRecording).toHaveBeenCalledTimes(1);
+    });
+
+    // Clear pending playback-end timer created by turnComplete.
+    act(() => {
+      eventHandler?.({ interrupted: true });
+    });
+  });
+
+  it('keeps non-onboarding auto-start behavior gated until turnComplete', async () => {
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+
+    expect(mockStartRecording).not.toHaveBeenCalled();
+    expect(eventHandler).not.toBeNull();
+
+    act(() => {
+      eventHandler?.({ turnComplete: true });
+    });
+
+    await waitFor(() => {
+      expect(mockStartRecording).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('allows onboarding barge-in while playing by stopping playback on user speech', async () => {
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockIsPlaying = true;
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+
+    expect(eventHandler).not.toBeNull();
+    act(() => {
+      eventHandler?.({
+        serverContent: {
+          inputTranscription: { text: 'hello there' },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockStopPlayback).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('continues playing sequential onboarding audio chunks across turn boundaries', async () => {
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+
+    expect(audioHandler).not.toBeNull();
+    act(() => {
+      audioHandler?.('AQID', 'audio/pcm;rate=16000');
+    });
+    act(() => {
+      eventHandler?.({ turnComplete: true });
+    });
+    act(() => {
+      audioHandler?.('BAUG', 'audio/pcm;rate=16000');
+    });
+
+    await waitFor(() => {
+      expect(mockPlayAudio).toHaveBeenCalledTimes(2);
+      expect(mockPlayAudio).toHaveBeenNthCalledWith(
+        1,
+        'AQID',
+        'audio/pcm;rate=16000'
+      );
+      expect(mockPlayAudio).toHaveBeenNthCalledWith(
+        2,
+        'BAUG',
+        'audio/pcm;rate=16000'
+      );
+    });
+
+    // Clear pending playback-end timer created by turnComplete.
+    act(() => {
+      eventHandler?.({ interrupted: true });
+    });
+  });
+
+  it('skips onboarding endPlayback for turnComplete events that have no audio', () => {
+    jest.useFakeTimers();
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+
+    act(() => {
+      eventHandler?.({ turnComplete: true });
+    });
+    act(() => {
+      jest.advanceTimersByTime(1500);
+    });
+    expect(mockEndPlayback).not.toHaveBeenCalled();
+
+    act(() => {
+      audioHandler?.('AQID', 'audio/pcm;rate=16000');
+    });
+    act(() => {
+      eventHandler?.({ turnComplete: true });
+    });
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(mockEndPlayback).toHaveBeenCalledTimes(1);
   });
 });
