@@ -41,6 +41,7 @@ export default function StartScreen() {
   } = useAuthBootstrap(backendUrl, getAccessToken);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const userId = user?.id ?? null;
 
   useEffect(() => {
     if (!user) {
@@ -48,6 +49,14 @@ export default function StartScreen() {
       setAuthError(null);
     }
   }, [resetState, user]);
+
+  useEffect(() => {
+    // Any new signed-in session should begin from an explicit idle setup state.
+    if (userId) {
+      resetState();
+      setAuthError(null);
+    }
+  }, [resetState, userId]);
 
   useEffect(() => {
     // If session appears while OAuth promise is still settling, unblock UI.

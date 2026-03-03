@@ -75,6 +75,7 @@ export default function AssistantScreen() {
       : resumeSessionId || triggerType
       ? 'proactive'
       : 'reactive';
+  const isOnboardingSession = triggerType === 'onboarding';
 
   const isStaleNotificationEntry = useMemo(() => {
     if (
@@ -453,8 +454,10 @@ export default function AssistantScreen() {
 
       // Handle input transcription (user speech)
       if (event.serverContent?.inputTranscription?.text) {
+        const ignoreOnboardingPlaybackBargeIn =
+          isOnboardingSession && isPlaying;
         // If user starts talking, stop assistant playback immediately for barge-in UX.
-        if (isPlaying) {
+        if (isPlaying && !ignoreOnboardingPlaybackBargeIn) {
           if (endPlaybackTimerRef.current) {
             clearTimeout(endPlaybackTimerRef.current);
             endPlaybackTimerRef.current = null;
@@ -464,10 +467,12 @@ export default function AssistantScreen() {
           setStreamingTranscription(null);
           void stopPlayback();
         }
-        addTranscription(
-          transcriptionUserId,
-          event.serverContent.inputTranscription.text
-        );
+        if (!ignoreOnboardingPlaybackBargeIn) {
+          addTranscription(
+            transcriptionUserId,
+            event.serverContent.inputTranscription.text
+          );
+        }
       }
 
       // Handle output transcription (agent speech) - already complete
@@ -583,6 +588,7 @@ export default function AssistantScreen() {
     mergeStreamingText,
     schedulePlaybackEnd,
     isPlaying,
+    isOnboardingSession,
     stopPlayback,
     transcriptionUserId,
     handoffToMainAgent,
