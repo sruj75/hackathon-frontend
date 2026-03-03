@@ -1,6 +1,16 @@
 import React from 'react';
 import { act, render, waitFor } from '@testing-library/react-native';
 
+const createPcm16Buffer = (amplitude: number, sampleCount = 320) => {
+  const buffer = new ArrayBuffer(sampleCount * 2);
+  const view = new DataView(buffer);
+  const clamped = Math.max(-32768, Math.min(32767, Math.trunc(amplitude)));
+  for (let i = 0; i < sampleCount; i++) {
+    view.setInt16(i * 2, clamped, true);
+  }
+  return buffer;
+};
+
 const mockRouterBack = jest.fn();
 const mockConnect = jest.fn();
 const mockDisconnect = jest.fn();
@@ -9,6 +19,7 @@ const mockSendText = jest.fn();
 let eventHandler: ((event: any) => void) | null = null;
 let audioHandler: ((audioData: ArrayBuffer | string, mimeType?: string) => void) | null =
   null;
+let audioDataHandler: ((audioData: ArrayBuffer) => void) | null = null;
 const mockOnEvent = jest.fn((callback: (event: any) => void) => {
   eventHandler = callback;
   return jest.fn(() => {
@@ -30,7 +41,14 @@ const mockOnAudio = jest.fn(
 const mockOnUIComponent = jest.fn(() => jest.fn());
 const mockStartRecording = jest.fn(async () => undefined);
 const mockStopRecording = jest.fn(async () => undefined);
-const mockOnAudioData = jest.fn(() => jest.fn());
+const mockOnAudioData = jest.fn((callback: (audioData: ArrayBuffer) => void) => {
+  audioDataHandler = callback;
+  return jest.fn(() => {
+    if (audioDataHandler === callback) {
+      audioDataHandler = null;
+    }
+  });
+});
 const mockPlayAudio = jest.fn();
 const mockEndPlayback = jest.fn(async () => undefined);
 const mockStopPlayback = jest.fn(async () => undefined);
@@ -99,6 +117,7 @@ describe('Assistant screen integration', () => {
     mockUser = { id: 'user_test' };
     eventHandler = null;
     audioHandler = null;
+    audioDataHandler = null;
     mockIsPlaying = false;
     mockWsState = { isConnected: false, isConnecting: false, error: null };
 
@@ -224,6 +243,102 @@ describe('Assistant screen integration', () => {
     await waitFor(() => {
       expect(mockStartRecording).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('keeps non-onboarding uplink unchanged and forwards mic chunks', () => {
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+    expect(audioDataHandler).not.toBeNull();
+
+    act(() => {
+      audioDataHandler?.(createPcm16Buffer(1200));
+    });
+
+    expect(mockSendAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops onboarding mic chunks during playback echo guard', () => {
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+    expect(audioHandler).not.toBeNull();
+    expect(audioDataHandler).not.toBeNull();
+
+    act(() => {
+      audioHandler?.('AQID', 'audio/pcm;rate=16000');
+    });
+    act(() => {
+      audioDataHandler?.(createPcm16Buffer(500));
+    });
+
+    expect(mockSendAudio).not.toHaveBeenCalled();
+  });
+
+  it('opens onboarding barge-in path after strong speech during playback', async () => {
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+    expect(audioHandler).not.toBeNull();
+    expect(audioDataHandler).not.toBeNull();
+
+    act(() => {
+      audioHandler?.('AQID', 'audio/pcm;rate=16000');
+    });
+
+    const strongSpeech = createPcm16Buffer(12000);
+    act(() => {
+      audioDataHandler?.(strongSpeech);
+      audioDataHandler?.(strongSpeech);
+      audioDataHandler?.(strongSpeech);
+      audioDataHandler?.(strongSpeech);
+    });
+
+    await waitFor(() => {
+      expect(mockStopPlayback).toHaveBeenCalledTimes(1);
+      expect(mockSendAudio).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      audioDataHandler?.(strongSpeech);
+    });
+    expect(mockSendAudio).toHaveBeenCalledTimes(2);
   });
 
   it('allows onboarding barge-in while playing by stopping playback on user speech', async () => {

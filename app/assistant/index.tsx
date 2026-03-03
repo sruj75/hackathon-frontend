@@ -40,6 +40,65 @@ interface Transcription {
 type ViewMode = 'voice' | 'chat' | 'ui';
 const PLAYBACK_END_DEBOUNCE_MS_DEFAULT = 320;
 const PLAYBACK_END_DEBOUNCE_MS_ONBOARDING = 900;
+const ONBOARDING_ECHO_GUARD_TAIL_MS = 250;
+const ONBOARDING_BARGE_IN_OPEN_WINDOW_MS = 1200;
+const ONBOARDING_BARGE_IN_MIN_CONSECUTIVE_FRAMES = 4;
+const ONBOARDING_BARGE_IN_ABS_RMS_THRESHOLD = 0.035;
+const ONBOARDING_BARGE_IN_PLAYBACK_RMS_MULTIPLIER = 1.8;
+const ONBOARDING_MIC_NOISE_RMS_MULTIPLIER = 3.0;
+const ONBOARDING_SIGNAL_EMA_ALPHA = 0.22;
+const ONBOARDING_NOISE_EMA_ALPHA = 0.08;
+
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 1) {
+    return 1;
+  }
+  return value;
+}
+
+function pcm16RmsFromArrayBuffer(audioData: ArrayBuffer): number {
+  const byteLength = audioData.byteLength;
+  if (byteLength < 2) {
+    return 0;
+  }
+  const sampleCount = Math.floor(byteLength / 2);
+  if (sampleCount <= 0) {
+    return 0;
+  }
+  const view = new DataView(audioData);
+  let sumSquares = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    const sample = view.getInt16(i * 2, true) / 32768;
+    sumSquares += sample * sample;
+  }
+  return clampUnit(Math.sqrt(sumSquares / sampleCount));
+}
+
+function pcm16RmsFromBase64(base64Data: string): number {
+  if (!base64Data) {
+    return 0;
+  }
+  try {
+    const decode = (globalThis as { atob?: (value: string) => string }).atob;
+    if (typeof decode !== 'function') {
+      return 0;
+    }
+    const binaryString = decode(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return pcm16RmsFromArrayBuffer(bytes.buffer);
+  } catch {
+    return 0;
+  }
+}
 
 export default function AssistantScreen() {
   const router = useRouter();
@@ -192,6 +251,13 @@ export default function AssistantScreen() {
     lastInputChunkAtMs: null as number | null,
     maxInputChunkGapMs: 0,
   });
+  const onboardingEchoGuardUntilMsRef = useRef(0);
+  const onboardingBargeInActiveUntilMsRef = useRef(0);
+  const onboardingPlaybackRmsEmaRef = useRef(0);
+  const onboardingMicNoiseRmsEmaRef = useRef(0.01);
+  const onboardingBargeInConsecutiveFramesRef = useRef(0);
+  const onboardingEchoGuardDropCountRef = useRef(0);
+  const onboardingBargeInTriggerCountRef = useRef(0);
   const playbackEndDebounceMs =
     triggerType === 'onboarding'
       ? PLAYBACK_END_DEBOUNCE_MS_ONBOARDING
@@ -260,7 +326,12 @@ export default function AssistantScreen() {
       pendingTurnCompleteRef.current = false;
       endPlaybackTimerRef.current = null;
     }, playbackEndDebounceMs);
-  }, [endPlayback, playbackEndDebounceMs, isOnboardingSession, logOnboardingAudio]);
+  }, [
+    endPlayback,
+    playbackEndDebounceMs,
+    isOnboardingSession,
+    logOnboardingAudio,
+  ]);
 
   const mergeStreamingText = useCallback(
     (current: string, incoming: string) => {
@@ -398,6 +469,13 @@ export default function AssistantScreen() {
       diagnostics.inputChunkSentCount = 0;
       diagnostics.lastInputChunkAtMs = null;
       diagnostics.maxInputChunkGapMs = 0;
+      onboardingEchoGuardUntilMsRef.current = 0;
+      onboardingBargeInActiveUntilMsRef.current = 0;
+      onboardingPlaybackRmsEmaRef.current = 0;
+      onboardingMicNoiseRmsEmaRef.current = 0.01;
+      onboardingBargeInConsecutiveFramesRef.current = 0;
+      onboardingEchoGuardDropCountRef.current = 0;
+      onboardingBargeInTriggerCountRef.current = 0;
       logOnboardingAudio('ws_connected', {
         ws_connected_at_ms: diagnostics.wsConnectedAtMs,
       });
@@ -407,13 +485,15 @@ export default function AssistantScreen() {
         ws_connected_at_ms: diagnostics.wsConnectedAtMs,
         recording_started_at_ms: diagnostics.recordingStartedAtMs,
         first_output_audio_at_ms: diagnostics.firstOutputAudioAtMs,
-        first_input_transcription_at_ms: diagnostics.firstInputTranscriptionAtMs,
+        first_input_transcription_at_ms:
+          diagnostics.firstInputTranscriptionAtMs,
         interruption_count: diagnostics.interruptionCount,
         output_turn_count: diagnostics.outputTurnIndex,
         output_gap_warning_count: diagnostics.outputGapWarningCount,
         output_underrun_warning_count: diagnostics.outputUnderrunWarningCount,
         max_output_underrun_ms: diagnostics.maxOutputUnderrunMs,
-        playback_stopped_on_input_count: diagnostics.playbackStoppedOnInputCount,
+        playback_stopped_on_input_count:
+          diagnostics.playbackStoppedOnInputCount,
         input_chunk_seen_count: diagnostics.inputChunkSeenCount,
         input_chunk_sent_count: diagnostics.inputChunkSentCount,
         max_input_chunk_gap_ms: diagnostics.maxInputChunkGapMs,
@@ -434,12 +514,15 @@ export default function AssistantScreen() {
       diagnostics.inputChunkSentCount = 0;
       diagnostics.lastInputChunkAtMs = null;
       diagnostics.maxInputChunkGapMs = 0;
+      onboardingEchoGuardUntilMsRef.current = 0;
+      onboardingBargeInActiveUntilMsRef.current = 0;
+      onboardingPlaybackRmsEmaRef.current = 0;
+      onboardingMicNoiseRmsEmaRef.current = 0.01;
+      onboardingBargeInConsecutiveFramesRef.current = 0;
+      onboardingEchoGuardDropCountRef.current = 0;
+      onboardingBargeInTriggerCountRef.current = 0;
     }
-  }, [
-    isOnboardingSession,
-    wsState.isConnected,
-    logOnboardingAudio,
-  ]);
+  }, [isOnboardingSession, wsState.isConnected, logOnboardingAudio]);
 
   // Auto-start recording when WebSocket connects for real-time streaming
   const hasAutoStartedRef = React.useRef(false);
@@ -451,9 +534,7 @@ export default function AssistantScreen() {
       !hasAutoStartedRef.current &&
       !isStoppingRecordingRef.current &&
       (isOnboardingSession || !awaitingInitialGreeting);
-    if (
-      shouldAutoStart
-    ) {
+    if (shouldAutoStart) {
       console.log('Auto-starting real-time recording...');
       startRecording()
         .then(() => {
@@ -511,6 +592,13 @@ export default function AssistantScreen() {
       playbackTimerScheduleCountRef.current = 0;
       streamingTextRef.current = '';
       turnHasOutputTranscriptionRef.current = false;
+      onboardingEchoGuardUntilMsRef.current = 0;
+      onboardingBargeInActiveUntilMsRef.current = 0;
+      onboardingPlaybackRmsEmaRef.current = 0;
+      onboardingMicNoiseRmsEmaRef.current = 0.01;
+      onboardingBargeInConsecutiveFramesRef.current = 0;
+      onboardingEchoGuardDropCountRef.current = 0;
+      onboardingBargeInTriggerCountRef.current = 0;
       hasAutoStartedRef.current = false;
       if (isRecording && !isStoppingRecordingRef.current) {
         isStoppingRecordingRef.current = true;
@@ -522,12 +610,7 @@ export default function AssistantScreen() {
       }
       setIsMicEnabled(false);
     }
-  }, [
-    wsState.isConnected,
-    isRecording,
-    stopRecording,
-    isOnboardingSession,
-  ]);
+  }, [wsState.isConnected, isRecording, stopRecording, isOnboardingSession]);
 
   // Set up audio data callback - stream audio chunks to WebSocket in real-time
   useEffect(() => {
@@ -544,6 +627,7 @@ export default function AssistantScreen() {
 
       const diagnostics = onboardingDiagnosticsRef.current;
       const now = Date.now();
+      const micRms = pcm16RmsFromArrayBuffer(data);
       diagnostics.inputChunkSeenCount += 1;
       if (diagnostics.lastInputChunkAtMs !== null) {
         const inputGap = now - diagnostics.lastInputChunkAtMs;
@@ -554,9 +638,82 @@ export default function AssistantScreen() {
       }
       diagnostics.lastInputChunkAtMs = now;
 
-      // Onboarding full-duplex: send each captured chunk immediately.
-      sendAudio(data);
-      diagnostics.inputChunkSentCount += 1;
+      const sendOnboardingMicChunk = () => {
+        sendAudio(data);
+        diagnostics.inputChunkSentCount += 1;
+      };
+
+      if (now < onboardingBargeInActiveUntilMsRef.current) {
+        sendOnboardingMicChunk();
+      } else {
+        const playbackGuardActive =
+          isPlaying || now < onboardingEchoGuardUntilMsRef.current;
+        if (!playbackGuardActive) {
+          const noiseFloor = onboardingMicNoiseRmsEmaRef.current;
+          onboardingMicNoiseRmsEmaRef.current =
+            noiseFloor + ONBOARDING_NOISE_EMA_ALPHA * (micRms - noiseFloor);
+          onboardingBargeInConsecutiveFramesRef.current = 0;
+          sendOnboardingMicChunk();
+        } else {
+          const playbackRms = onboardingPlaybackRmsEmaRef.current;
+          const noiseFloor = onboardingMicNoiseRmsEmaRef.current;
+          const threshold = Math.max(
+            ONBOARDING_BARGE_IN_ABS_RMS_THRESHOLD,
+            playbackRms * ONBOARDING_BARGE_IN_PLAYBACK_RMS_MULTIPLIER,
+            noiseFloor * ONBOARDING_MIC_NOISE_RMS_MULTIPLIER
+          );
+
+          if (micRms >= threshold) {
+            onboardingBargeInConsecutiveFramesRef.current += 1;
+          } else {
+            onboardingBargeInConsecutiveFramesRef.current = 0;
+          }
+
+          if (
+            onboardingBargeInConsecutiveFramesRef.current >=
+            ONBOARDING_BARGE_IN_MIN_CONSECUTIVE_FRAMES
+          ) {
+            onboardingBargeInConsecutiveFramesRef.current = 0;
+            onboardingBargeInTriggerCountRef.current += 1;
+            onboardingBargeInActiveUntilMsRef.current =
+              now + ONBOARDING_BARGE_IN_OPEN_WINDOW_MS;
+            onboardingEchoGuardUntilMsRef.current = now;
+            diagnostics.playbackStoppedOnInputCount += 1;
+            if (endPlaybackTimerRef.current) {
+              clearTimeout(endPlaybackTimerRef.current);
+              endPlaybackTimerRef.current = null;
+            }
+            pendingTurnCompleteRef.current = false;
+            turnHasAudioChunkRef.current = false;
+            streamingTextRef.current = '';
+            setStreamingTranscription(null);
+            logOnboardingAudio('onboarding_barge_in_trigger', {
+              trigger_count: onboardingBargeInTriggerCountRef.current,
+              consecutive_frames: ONBOARDING_BARGE_IN_MIN_CONSECUTIVE_FRAMES,
+              mic_rms: micRms,
+              threshold_rms: threshold,
+              playback_rms_ema: playbackRms,
+              noise_floor_rms_ema: noiseFloor,
+              playback_stopped_on_input_count:
+                diagnostics.playbackStoppedOnInputCount,
+            });
+            void stopPlayback();
+            sendOnboardingMicChunk();
+          } else {
+            onboardingEchoGuardDropCountRef.current += 1;
+            if (onboardingEchoGuardDropCountRef.current % 40 === 0) {
+              logOnboardingAudio('onboarding_echo_guard_drop', {
+                dropped_chunk_count: onboardingEchoGuardDropCountRef.current,
+                mic_rms: micRms,
+                threshold_rms: threshold,
+                playback_rms_ema: playbackRms,
+                noise_floor_rms_ema: noiseFloor,
+                barge_in_frames: onboardingBargeInConsecutiveFramesRef.current,
+              });
+            }
+          }
+        }
+      }
 
       if (diagnostics.inputChunkSeenCount % 100 === 0) {
         logOnboardingAudio('input_uplink_flow', {
@@ -573,6 +730,7 @@ export default function AssistantScreen() {
     wsState.isConnected,
     isOnboardingSession,
     isPlaying,
+    stopPlayback,
     logOnboardingAudio,
   ]);
 
@@ -589,6 +747,18 @@ export default function AssistantScreen() {
         if (isOnboardingSession) {
           const diagnostics = onboardingDiagnosticsRef.current;
           now = Date.now();
+          onboardingBargeInActiveUntilMsRef.current = 0;
+          onboardingEchoGuardUntilMsRef.current =
+            now + ONBOARDING_ECHO_GUARD_TAIL_MS;
+          onboardingBargeInConsecutiveFramesRef.current = 0;
+          const outputRms =
+            typeof audioData === 'string'
+              ? pcm16RmsFromBase64(audioData)
+              : pcm16RmsFromArrayBuffer(audioData);
+          const currentPlaybackRms = onboardingPlaybackRmsEmaRef.current;
+          onboardingPlaybackRmsEmaRef.current =
+            currentPlaybackRms +
+            ONBOARDING_SIGNAL_EMA_ALPHA * (outputRms - currentPlaybackRms);
           if (diagnostics.currentTurnChunkCount === 0) {
             diagnostics.outputTurnIndex += 1;
             logOnboardingAudio('output_turn_started', {
@@ -642,7 +812,8 @@ export default function AssistantScreen() {
               since_ws_connected_ms:
                 diagnostics.wsConnectedAtMs === null
                   ? null
-                  : diagnostics.firstOutputAudioAtMs - diagnostics.wsConnectedAtMs,
+                  : diagnostics.firstOutputAudioAtMs -
+                    diagnostics.wsConnectedAtMs,
               since_recording_started_ms:
                 diagnostics.recordingStartedAtMs === null
                   ? null
