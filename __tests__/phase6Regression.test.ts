@@ -170,6 +170,40 @@ describe('Phase 6 Regression - WebSocket + Generative UI', () => {
     expect(onEvent).not.toHaveBeenCalled();
   });
 
+  it('forwards onboarding_completed system events through onEvent', () => {
+    const onEvent = jest.fn();
+    const { result } = renderHook(() =>
+      useWebSocketAgent('session_test', 'jwt_test')
+    );
+
+    act(() => {
+      result.current.onEvent(onEvent);
+      result.current.connect();
+      mockWs.readyState = 1;
+      mockWs.onopen?.(new Event('open'));
+    });
+
+    act(() => {
+      mockWs.onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'onboarding_completed',
+            next_action: 'show_done_screen',
+            route_hint: 'assistant',
+          }),
+        })
+      );
+    });
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'onboarding_completed',
+        next_action: 'show_done_screen',
+        route_hint: 'assistant',
+      })
+    );
+  });
+
   it('still processes regular ADK events and audio payloads', () => {
     const onAudio = jest.fn();
     const onEvent = jest.fn();

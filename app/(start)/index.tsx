@@ -169,7 +169,7 @@ export default function StartScreen() {
   const stepText =
     configurationError ||
     (setupReady
-      ? 'Setup complete. Tap below to start onboarding.'
+      ? 'Setup complete. Tap below to start onboarding conversation.'
       : !user
       ? 'Sign in with Google to begin setup.'
       : state.stepLabel ||

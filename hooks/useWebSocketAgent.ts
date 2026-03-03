@@ -12,6 +12,7 @@ export interface WebSocketState {
 }
 
 export interface ADKEvent {
+  type?: string;
   // ADK event structure
   content?: {
     parts?: {
@@ -40,6 +41,23 @@ export interface ADKEvent {
   };
 }
 
+export interface OnboardingCompletedEvent {
+  type: 'onboarding_completed';
+  next_action?: 'show_done_screen';
+  route_hint?: 'assistant';
+}
+
+export interface OnboardingCompletionFailedEvent {
+  type: 'onboarding_completion_failed';
+  message?: string;
+  missing_fields?: string[];
+}
+
+export type AgentSocketEvent =
+  | ADKEvent
+  | OnboardingCompletedEvent
+  | OnboardingCompletionFailedEvent;
+
 export interface ConnectOptions {
   resume_session_id?: string;
   trigger_type?: string;
@@ -57,7 +75,7 @@ export interface UseWebSocketAgentReturn {
   disconnect: () => void;
   sendAudio: (audioData: ArrayBuffer) => void;
   sendText: (text: string) => void;
-  onEvent: (callback: (event: ADKEvent) => void) => () => void;
+  onEvent: (callback: (event: AgentSocketEvent) => void) => () => void;
   onAudio: (
     callback: (audioData: ArrayBuffer | string, mimeType?: string) => void
   ) => () => void;
@@ -91,7 +109,9 @@ export function useWebSocketAgent(
   const MAX_RETRIES = 3;
   const connectOptionsRef = useRef<ConnectOptions | undefined>(undefined);
 
-  const eventCallbackRef = useRef<((event: ADKEvent) => void) | null>(null);
+  const eventCallbackRef = useRef<((event: AgentSocketEvent) => void) | null>(
+    null
+  );
   const audioCallbackRef = useRef<
     ((audioData: ArrayBuffer | string, mimeType?: string) => void) | null
   >(null);
@@ -268,6 +288,14 @@ export function useWebSocketAgent(
                 return; // Don't process as regular ADK event
               }
 
+              if (
+                parsed.type === 'onboarding_completed' ||
+                parsed.type === 'onboarding_completion_failed'
+              ) {
+                eventCallbackRef.current?.(parsed as AgentSocketEvent);
+                return;
+              }
+
               // Regular ADK event processing
               const adkEvent = parsed as ADKEvent;
 
@@ -345,7 +373,7 @@ export function useWebSocketAgent(
     }
   }, []);
 
-  const onEvent = useCallback((callback: (event: ADKEvent) => void) => {
+  const onEvent = useCallback((callback: (event: AgentSocketEvent) => void) => {
     eventCallbackRef.current = callback;
     return () => {
       if (eventCallbackRef.current === callback) {

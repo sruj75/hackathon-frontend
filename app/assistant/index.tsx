@@ -5,6 +5,7 @@ import {
   View,
   ScrollView,
   Text,
+  TouchableOpacity,
 } from 'react-native';
 
 import React, {
@@ -23,7 +24,10 @@ import AgentVisualization from '../../components/assistant/AgentVisualization';
 import {
   useWebSocketAgent,
   ADKEvent,
+  AgentSocketEvent,
   GenerativeUIEvent,
+  OnboardingCompletedEvent,
+  OnboardingCompletionFailedEvent,
 } from '@/hooks/useWebSocketAgent';
 import { useAudioRecording, useAudioPlayback } from '@/hooks/useAudio';
 import { useAuth } from '@/hooks/useAuth';
@@ -98,6 +102,22 @@ function pcm16RmsFromBase64(base64Data: string): number {
   } catch {
     return 0;
   }
+}
+
+function isOnboardingCompletedEvent(
+  event: AgentSocketEvent
+): event is OnboardingCompletedEvent {
+  return event.type === 'onboarding_completed';
+}
+
+function isOnboardingCompletionFailedEvent(
+  event: AgentSocketEvent
+): event is OnboardingCompletionFailedEvent {
+  return event.type === 'onboarding_completion_failed';
+}
+
+function isADKEvent(event: AgentSocketEvent): event is ADKEvent {
+  return !isOnboardingCompletedEvent(event) && !isOnboardingCompletionFailedEvent(event);
 }
 
 export default function AssistantScreen() {
@@ -231,8 +251,6 @@ export default function AssistantScreen() {
     timestamp: number;
   } | null>(null);
   const turnHasOutputTranscriptionRef = useRef(false);
-  const hasPostOnboardingHandoffRef = useRef(false);
-  const pendingPostOnboardingReconnectRef = useRef(false);
   const onboardingDiagnosticsRef = useRef({
     wsConnectedAtMs: null as number | null,
     recordingStartedAtMs: null as number | null,
@@ -286,18 +304,19 @@ export default function AssistantScreen() {
     participant: string;
     text: string;
   } | null>(null);
+  const [onboardingDoneVisible, setOnboardingDoneVisible] = useState(false);
+  const [completionErrorMessage, setCompletionErrorMessage] = useState<
+    string | null
+  >(null);
+  const [missingFields, setMissingFields] = useState<string[]>([]);
+  const [continueError, setContinueError] = useState<string | null>(null);
+  const [isVerifyingContinue, setIsVerifyingContinue] = useState(false);
 
   // Generative UI State
   const [uiComponents, setUIComponents] = useState<GenerativeUIEvent[]>([]);
   const [isPendingUIRender, setIsPendingUIRender] = useState(false);
   const isMicUiEnabled =
     isMicEnabled || (wsState.isConnected && awaitingInitialGreeting);
-
-  useEffect(() => {
-    return () => {
-      pendingPostOnboardingReconnectRef.current = false;
-    };
-  }, []);
 
   const schedulePlaybackEnd = useCallback(() => {
     const scheduleId = ++playbackTimerScheduleCountRef.current;
@@ -352,29 +371,6 @@ export default function AssistantScreen() {
     },
     []
   );
-
-  const handoffToMainAgent = useCallback(() => {
-    if (hasPostOnboardingHandoffRef.current) {
-      return;
-    }
-    hasPostOnboardingHandoffRef.current = true;
-
-    if (endPlaybackTimerRef.current) {
-      clearTimeout(endPlaybackTimerRef.current);
-      endPlaybackTimerRef.current = null;
-    }
-    pendingTurnCompleteRef.current = false;
-    streamingTextRef.current = '';
-    turnHasOutputTranscriptionRef.current = false;
-
-    setStreamingTranscription(null);
-    setTranscriptions([]);
-    setViewMode('voice');
-    setAwaitingInitialGreeting(true);
-
-    pendingPostOnboardingReconnectRef.current = true;
-    disconnect();
-  }, [disconnect]);
 
   // Connect on mount with session resumption params if available
   useEffect(() => {
@@ -431,21 +427,88 @@ export default function AssistantScreen() {
     isStaleNotificationEntry,
   ]);
 
-  // Event-driven post-onboarding reconnect: reconnect only after disconnect settles.
-  useEffect(() => {
-    if (!pendingPostOnboardingReconnectRef.current) {
-      return;
-    }
-    if (wsState.isConnected || wsState.isConnecting) {
-      return;
-    }
-    pendingPostOnboardingReconnectRef.current = false;
+  const reconnectOnboardingSession = useCallback(() => {
     connect({
-      trigger_type: 'post_onboarding',
-      entry_mode: 'post_onboarding',
-      source: 'post_onboarding',
+      resume_session_id: effectiveResumeSessionId as string,
+      trigger_type: 'onboarding',
+      entry_mode: 'reactive',
+      source: 'manual',
     });
-  }, [connect, wsState.isConnected, wsState.isConnecting]);
+  }, [connect, effectiveResumeSessionId]);
+
+  const showOnboardingDoneState = useCallback(() => {
+    if (endPlaybackTimerRef.current) {
+      clearTimeout(endPlaybackTimerRef.current);
+      endPlaybackTimerRef.current = null;
+    }
+    pendingTurnCompleteRef.current = false;
+    turnHasAudioChunkRef.current = false;
+    turnHasOutputTranscriptionRef.current = false;
+    streamingTextRef.current = '';
+    setStreamingTranscription(null);
+    setCompletionErrorMessage(null);
+    setMissingFields([]);
+    setContinueError(null);
+    setOnboardingDoneVisible(true);
+    void stopRecording();
+    void stopPlayback();
+    disconnect();
+  }, [disconnect, stopPlayback, stopRecording]);
+
+  const handleContinueToAssistant = useCallback(async () => {
+    if (isVerifyingContinue) {
+      return;
+    }
+    const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+    if (!backendUrl || !session?.access_token) {
+      setContinueError('Missing auth or backend configuration. Please try again.');
+      return;
+    }
+
+    setIsVerifyingContinue(true);
+    setContinueError(null);
+    try {
+      const response = await fetch(`${backendUrl}/api/onboarding/bootstrap`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        route_hint?: string;
+      };
+      if (!response.ok) {
+        throw new Error(`Bootstrap verification failed (${response.status})`);
+      }
+
+      if (body.route_hint === 'assistant') {
+        router.replace({
+          pathname: '/assistant',
+          params: {
+            trigger_type: 'post_onboarding',
+            entry_mode: 'post_onboarding',
+            source: 'post_onboarding',
+          },
+        });
+        return;
+      }
+
+      setContinueError(
+        'Onboarding is still finishing. We will keep you in onboarding and retry.'
+      );
+      setOnboardingDoneVisible(false);
+      reconnectOnboardingSession();
+    } catch (error) {
+      console.error('[onboarding] continue verification failed', error);
+      setContinueError(
+        'Could not verify onboarding completion. Staying in onboarding for safety.'
+      );
+      setOnboardingDoneVisible(false);
+      reconnectOnboardingSession();
+    } finally {
+      setIsVerifyingContinue(false);
+    }
+  }, [isVerifyingContinue, reconnectOnboardingSession, router, session?.access_token]);
 
   useEffect(() => {
     if (!isOnboardingSession) {
@@ -877,7 +940,27 @@ export default function AssistantScreen() {
 
   // Handle ADK events (transcriptions, responses)
   useEffect(() => {
-    const unsubscribe = onEvent((event: ADKEvent) => {
+    const unsubscribe = onEvent((event: AgentSocketEvent) => {
+      if (isOnboardingCompletedEvent(event) && isOnboardingSession) {
+        showOnboardingDoneState();
+        return;
+      }
+      if (isOnboardingCompletionFailedEvent(event) && isOnboardingSession) {
+        const normalizedMissingFields = Array.isArray(event.missing_fields)
+          ? event.missing_fields.filter((field) => typeof field === 'string')
+          : [];
+        setOnboardingDoneVisible(false);
+        setContinueError(null);
+        setCompletionErrorMessage(
+          event.message || 'Onboarding is not complete yet. Please answer the missing fields.'
+        );
+        setMissingFields(normalizedMissingFields);
+        return;
+      }
+      if (!isADKEvent(event)) {
+        return;
+      }
+
       // Handle interruptions - clear any streaming text when user interrupts
       if (event.interrupted) {
         console.log(
@@ -979,31 +1062,6 @@ export default function AssistantScreen() {
 
       // Handle text responses (Chat Mode) - with streaming support
       if (event.content?.parts) {
-        let shouldHandoffToMain = false;
-        for (const part of event.content.parts as Record<string, unknown>[]) {
-          const functionResponse = part.functionResponse as
-            | {
-                name?: string;
-                response?: Record<string, unknown>;
-              }
-            | undefined;
-          if (functionResponse?.name !== 'complete_onboarding') {
-            continue;
-          }
-          const response = functionResponse.response || {};
-          const onboardingStatus = response.onboarding_status;
-          const routeHint = response.route_hint;
-          const handoffToMain = Boolean(response.handoff_to_main);
-          if (
-            (handoffToMain ||
-              (onboardingStatus === 'completed' &&
-                routeHint === 'assistant')) &&
-            triggerType === 'onboarding'
-          ) {
-            shouldHandoffToMain = true;
-          }
-        }
-
         const hasAudioPart = event.content.parts.some((part) =>
           Boolean(part.inlineData?.mimeType?.includes('audio'))
         );
@@ -1049,9 +1107,6 @@ export default function AssistantScreen() {
               }
             }
           }
-        }
-        if (shouldHandoffToMain) {
-          handoffToMainAgent();
         }
       }
 
@@ -1110,8 +1165,7 @@ export default function AssistantScreen() {
     isOnboardingSession,
     stopPlayback,
     transcriptionUserId,
-    handoffToMainAgent,
-    triggerType,
+    showOnboardingDoneState,
     logOnboardingAudio,
   ]);
 
@@ -1141,7 +1195,6 @@ export default function AssistantScreen() {
   }, [viewMode, uiComponents.length]);
 
   const onExitClick = useCallback(async () => {
-    pendingPostOnboardingReconnectRef.current = false;
     await stopRecording();
     disconnect();
     await stopPlayback();
@@ -1282,6 +1335,25 @@ export default function AssistantScreen() {
           {viewMode === 'voice' && <View style={styles.spacer} />}
         </View>
 
+        {isOnboardingSession &&
+        !onboardingDoneVisible &&
+        (completionErrorMessage || continueError) ? (
+          <View style={styles.onboardingAlert} testID="onboarding-failure-panel">
+            <Text style={styles.onboardingAlertTitle}>Onboarding needs one more step</Text>
+            {completionErrorMessage ? (
+              <Text style={styles.onboardingAlertText}>{completionErrorMessage}</Text>
+            ) : null}
+            {missingFields.length > 0 ? (
+              <Text style={styles.onboardingAlertText}>
+                Missing: {missingFields.join(', ')}
+              </Text>
+            ) : null}
+            {continueError ? (
+              <Text style={styles.onboardingAlertText}>{continueError}</Text>
+            ) : null}
+          </View>
+        ) : null}
+
         {/* 3. Bottom: Control Bar (Always present) */}
         <ControlBar
           style={styles.controlBar}
@@ -1297,6 +1369,31 @@ export default function AssistantScreen() {
             onExitClick,
           }}
         />
+
+        {onboardingDoneVisible ? (
+          <View style={styles.onboardingDoneOverlay} testID="onboarding-done-panel">
+            <View style={styles.onboardingDoneCard}>
+              <Text style={styles.onboardingDoneTitle}>Onboarding complete</Text>
+              <Text style={styles.onboardingDoneText}>
+                Your setup is saved. Tap Continue to enter the main assistant.
+              </Text>
+              <TouchableOpacity
+                style={styles.onboardingDoneButton}
+                activeOpacity={0.7}
+                onPress={handleContinueToAssistant}
+                disabled={isVerifyingContinue}
+                testID="onboarding-continue-button"
+              >
+                <Text style={styles.onboardingDoneButtonText}>
+                  {isVerifyingContinue ? 'Checking...' : 'Continue'}
+                </Text>
+              </TouchableOpacity>
+              {continueError ? (
+                <Text style={styles.onboardingDoneErrorText}>{continueError}</Text>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
       </View>
     </SafeAreaView>
   );
@@ -1350,6 +1447,77 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     backgroundColor: '#000000',
+  },
+  onboardingAlert: {
+    width: '92%',
+    backgroundColor: 'rgba(130, 22, 22, 0.85)',
+    borderColor: 'rgba(255, 190, 190, 0.35)',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    zIndex: 3,
+  },
+  onboardingAlertTitle: {
+    color: '#FFD5D5',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  onboardingAlertText: {
+    color: '#FFEAEA',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  onboardingDoneOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 4,
+    paddingHorizontal: 20,
+  },
+  onboardingDoneCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#111827',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2C3A58',
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+  },
+  onboardingDoneTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  onboardingDoneText: {
+    color: '#C6D0EA',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 14,
+  },
+  onboardingDoneButton: {
+    backgroundColor: '#0A45FF',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  onboardingDoneButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  onboardingDoneErrorText: {
+    color: '#FFCDCD',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 10,
   },
 });
 

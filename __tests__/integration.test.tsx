@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 const createPcm16Buffer = (amplitude: number, sampleCount = 320) => {
   const buffer = new ArrayBuffer(sampleCount * 2);
@@ -12,6 +12,7 @@ const createPcm16Buffer = (amplitude: number, sampleCount = 320) => {
 };
 
 const mockRouterBack = jest.fn();
+const mockRouterReplace = jest.fn();
 const mockConnect = jest.fn();
 const mockDisconnect = jest.fn();
 const mockSendAudio = jest.fn();
@@ -63,6 +64,7 @@ let mockUser: { id: string } | null = { id: 'user_test' };
 jest.mock('expo-router', () => ({
   useRouter: () => ({
     back: mockRouterBack,
+    replace: mockRouterReplace,
   }),
   useLocalSearchParams: () => mockParams,
 }));
@@ -460,5 +462,176 @@ describe('Assistant screen integration', () => {
       jest.advanceTimersByTime(1000);
     });
     expect(mockEndPlayback).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows onboarding done panel when onboarding_completed system event is received', async () => {
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    const { getByTestId } = render(<AssistantScreen />);
+
+    act(() => {
+      eventHandler?.({
+        type: 'onboarding_completed',
+        next_action: 'show_done_screen',
+        route_hint: 'assistant',
+      });
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('onboarding-done-panel')).toBeTruthy();
+    });
+    expect(mockDisconnect).toHaveBeenCalled();
+  });
+
+  it('verifies bootstrap on Continue and routes to post_onboarding assistant', async () => {
+    mockParams = {
+      trigger_type: 'onboarding',
+      resume_session_id: 'session_onboarding_user_test',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    const originalFetch = global.fetch;
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ route_hint: 'assistant' }),
+    } as Response);
+    global.fetch = fetchMock as typeof fetch;
+    process.env.EXPO_PUBLIC_BACKEND_URL = 'http://localhost:8080';
+
+    try {
+      const { getByTestId } = render(<AssistantScreen />);
+
+      act(() => {
+        eventHandler?.({
+          type: 'onboarding_completed',
+          next_action: 'show_done_screen',
+          route_hint: 'assistant',
+        });
+      });
+
+      fireEvent.press(getByTestId('onboarding-continue-button'));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          'http://localhost:8080/api/onboarding/bootstrap',
+          expect.objectContaining({
+            method: 'GET',
+            headers: expect.objectContaining({
+              Authorization: 'Bearer jwt_test',
+            }),
+          })
+        );
+      });
+
+      expect(mockRouterReplace).toHaveBeenCalledWith({
+        pathname: '/assistant',
+        params: {
+          trigger_type: 'post_onboarding',
+          entry_mode: 'post_onboarding',
+          source: 'post_onboarding',
+        },
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('stays in onboarding and shows missing fields on onboarding_completion_failed', async () => {
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    const { getByTestId, getByText } = render(<AssistantScreen />);
+
+    act(() => {
+      eventHandler?.({
+        type: 'onboarding_completion_failed',
+        message: 'Please complete missing onboarding fields.',
+        missing_fields: ['summary', 'goals'],
+      });
+    });
+
+    await waitFor(() => {
+      expect(getByTestId('onboarding-failure-panel')).toBeTruthy();
+      expect(getByText('Missing: summary, goals')).toBeTruthy();
+    });
+  });
+
+  it('does not auto-handoff on raw complete_onboarding function response', async () => {
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+
+    act(() => {
+      eventHandler?.({
+        content: {
+          parts: [
+            {
+              functionResponse: {
+                name: 'complete_onboarding',
+                response: {
+                  status: 'ok',
+                  onboarding_status: 'completed',
+                  route_hint: 'assistant',
+                  handoff_to_main: true,
+                },
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+    });
   });
 });
