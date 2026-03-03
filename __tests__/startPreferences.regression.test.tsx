@@ -4,8 +4,6 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 const mockReplace = jest.fn();
 const mockSignIn = jest.fn();
 const mockGetAccessToken = jest.fn(async () => 'jwt_test');
-const mockSetSigningIn = jest.fn();
-const mockSetError = jest.fn();
 const mockClearError = jest.fn();
 const mockResetState = jest.fn();
 const mockStartSetup = jest.fn();
@@ -17,6 +15,15 @@ let mockUser: { id: string } | null = null;
 let mockAuthLoading = false;
 let mockBootstrapState = {
   phase: 'idle',
+  step: null as
+    | 'bootstrap_check'
+    | 'tools_connect'
+    | 'mic_permission'
+    | 'notif_permission'
+    | 'finalizing'
+    | null,
+  stepLabel: '',
+  toolsAlreadyConnected: false,
   progress: '',
   error: null as string | null,
   errorCode: null as string | null,
@@ -44,8 +51,6 @@ jest.mock('@/hooks/useAuth', () => ({
 jest.mock('@/hooks/useAuthBootstrap', () => ({
   useAuthBootstrap: () => ({
     state: mockBootstrapState,
-    setSigningIn: mockSetSigningIn,
-    setError: mockSetError,
     clearError: mockClearError,
     resetState: mockResetState,
     startSetup: mockStartSetup,
@@ -75,6 +80,9 @@ describe('StartScreen bootstrap regressions', () => {
     mockAuthLoading = false;
     mockBootstrapState = {
       phase: 'idle',
+      step: null,
+      stepLabel: '',
+      toolsAlreadyConnected: false,
       progress: '',
       error: null,
       errorCode: null,
@@ -89,13 +97,23 @@ describe('StartScreen bootstrap regressions', () => {
     mockRecheckAfterForeground.mockResolvedValue(undefined);
   });
 
-  it('unauthenticated tap triggers sign-in then setup start', async () => {
+  it('unauthenticated tap triggers only sign-in', async () => {
     const { getByText } = render(<StartScreen />);
     fireEvent.press(getByText('Sign In With Google'));
 
     await waitFor(() => {
-      expect(mockSetSigningIn).toHaveBeenCalledTimes(1);
       expect(mockSignIn).toHaveBeenCalledTimes(1);
+      expect(mockStartSetup).not.toHaveBeenCalled();
+    });
+  });
+
+  it('authenticated tap triggers run setup', async () => {
+    mockUser = { id: 'user_test' };
+
+    const { getByText } = render(<StartScreen />);
+    fireEvent.press(getByText('Run setup'));
+
+    await waitFor(() => {
       expect(mockStartSetup).toHaveBeenCalledTimes(1);
     });
   });
@@ -209,18 +227,20 @@ describe('StartScreen bootstrap regressions', () => {
     });
   });
 
-  it('busy state includes requesting notifications and shows cancel setup', () => {
+  it('busy state includes step label and shows cancel setup', () => {
     mockUser = { id: 'user_test' };
     mockBootstrapState = {
       ...mockBootstrapState,
-      phase: 'requesting_notifications',
-      progress: 'Requesting notification permission...',
+      phase: 'running',
+      step: 'notif_permission',
+      stepLabel: 'Requesting notification permission...',
       isBusy: true,
       canCancel: true,
     };
 
     const { getByText, getByTestId } = render(<StartScreen />);
-    expect(getByText('Setting Up...')).toBeTruthy();
+    expect(getByText('Running setup...')).toBeTruthy();
+    expect(getByText('Requesting notification permission...')).toBeTruthy();
     expect(getByTestId('start-primary-button').props.accessibilityState.disabled).toBe(
       true
     );
@@ -231,7 +251,9 @@ describe('StartScreen bootstrap regressions', () => {
     mockUser = { id: 'user_test' };
     mockBootstrapState = {
       ...mockBootstrapState,
-      phase: 'verifying_setup',
+      phase: 'running',
+      step: 'bootstrap_check',
+      stepLabel: 'Checking your account setup...',
       isBusy: true,
       canCancel: true,
     };
@@ -245,13 +267,33 @@ describe('StartScreen bootstrap regressions', () => {
     mockUser = { id: 'user_test' };
     mockBootstrapState = {
       ...mockBootstrapState,
-      phase: 'connecting_tools',
+      phase: 'running',
+      step: 'tools_connect',
+      stepLabel: 'Checking connected tools...',
       isBusy: true,
       isStalled: true,
       canCancel: true,
     };
 
     const { getByText } = render(<StartScreen />);
+    expect(getByText('Checking connected tools...')).toBeTruthy();
     expect(getByText(/Still working. You can wait or cancel and retry./i)).toBeTruthy();
+  });
+
+  it('shows tools already connected messaging and no reconnect button', () => {
+    mockUser = { id: 'user_test' };
+    mockBootstrapState = {
+      ...mockBootstrapState,
+      phase: 'running',
+      step: 'tools_connect',
+      stepLabel: 'Tools already connected. Continuing...',
+      toolsAlreadyConnected: true,
+      isBusy: true,
+      canCancel: true,
+    };
+
+    const { getByText, queryByText } = render(<StartScreen />);
+    expect(getByText('Tools already connected. Continuing...')).toBeTruthy();
+    expect(queryByText(/Reconnect/i)).toBeNull();
   });
 });

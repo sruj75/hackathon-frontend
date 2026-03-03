@@ -31,6 +31,30 @@ function _extractHashParams(url: string): URLSearchParams {
   return new URLSearchParams(hash);
 }
 
+async function ensureSessionReadyAfterOAuth(): Promise<void> {
+  const deadline = Date.now() + 1500;
+
+  while (true) {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      throw error;
+    }
+    if (data.session?.access_token) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      break;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
+  }
+
+  throw new Error(
+    'Sign-in completed but session token is not ready yet. Please try again.'
+  );
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
@@ -95,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (exchange.error) {
         throw exchange.error;
       }
+      await ensureSessionReadyAfterOAuth();
       return;
     }
 
@@ -109,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (sessionSetResult.error) {
         throw sessionSetResult.error;
       }
+      await ensureSessionReadyAfterOAuth();
       return;
     }
 

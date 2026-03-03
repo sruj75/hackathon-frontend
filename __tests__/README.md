@@ -27,10 +27,6 @@ If the test rewrites the logic inside the test file, it gives false confidence.
 
 ## Suite Structure
 
-- `useNotifications.test.ts`
-  - Permission flow
-  - Token registration flow
-  - Backend error handling
 - `deepLinking.test.tsx`
   - Real `app/_layout.tsx` notification listener behavior
 - `integration.test.tsx`
@@ -127,7 +123,6 @@ Coverage is collected for critical runtime paths:
 - `app/_layout.tsx`
 - `app/(start)/index.tsx`
 - `components/generative/DayView.tsx`
-- `hooks/useNotifications.ts`
 - `hooks/useWebSocketAgent.ts`
 
 Recommended quality floor (documented, not enforced in `package.json`):

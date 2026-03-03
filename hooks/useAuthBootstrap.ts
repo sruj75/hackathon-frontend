@@ -14,14 +14,18 @@ export interface BootstrapResult {
 
 export type BootstrapPhase =
   | 'idle'
-  | 'signing_in'
-  | 'verifying_setup'
-  | 'connecting_tools'
-  | 'requesting_microphone'
-  | 'requesting_notifications'
+  | 'running'
   | 'ready'
   | 'error'
   | 'cancelled';
+
+export type BootstrapStep =
+  | 'bootstrap_check'
+  | 'tools_connect'
+  | 'mic_permission'
+  | 'notif_permission'
+  | 'finalizing'
+  | null;
 
 export type BootstrapErrorCode =
   | 'microphone_required'
@@ -47,14 +51,17 @@ interface BootstrapApiResponse {
 
 interface ConnectLinkResponse {
   status: string;
-  links?: Array<{
+  links?: {
     app: string;
     redirect_url?: string | null;
-  }>;
+  }[];
 }
 
 export interface AuthBootstrapState {
   phase: BootstrapPhase;
+  step: BootstrapStep;
+  stepLabel: string;
+  toolsAlreadyConnected: boolean;
   progress: string;
   error: string | null;
   errorCode: BootstrapErrorCode;
@@ -78,19 +85,6 @@ const IOS_GRANTED_STATUSES = new Set<number>([
   Notifications.IosAuthorizationStatus.PROVISIONAL,
   Notifications.IosAuthorizationStatus.EPHEMERAL,
 ]);
-const BUSY_PHASES = new Set<BootstrapPhase>([
-  'signing_in',
-  'verifying_setup',
-  'connecting_tools',
-  'requesting_microphone',
-  'requesting_notifications',
-]);
-const CANCELLABLE_PHASES = new Set<BootstrapPhase>([
-  'verifying_setup',
-  'connecting_tools',
-  'requesting_microphone',
-  'requesting_notifications',
-]);
 
 class BootstrapFlowError extends Error {
   code: Exclude<BootstrapErrorCode, null>;
@@ -110,7 +104,9 @@ function getMissingRequiredApps(apps: IntegrationAppStatus[]): string[] {
   const byApp = new Map(
     apps.map((app) => [app.app.toLowerCase(), app.connected === true])
   );
-  return REQUIRED_COMPOSIO_APPS.filter((requiredApp) => !byApp.get(requiredApp));
+  return REQUIRED_COMPOSIO_APPS.filter(
+    (requiredApp) => !byApp.get(requiredApp)
+  );
 }
 
 async function readResponseError(response: Response): Promise<string> {
@@ -119,11 +115,14 @@ async function readResponseError(response: Response): Promise<string> {
 }
 
 function isBusyPhase(phase: BootstrapPhase): boolean {
-  return BUSY_PHASES.has(phase);
+  return phase === 'running';
 }
 
 function toState({
   phase,
+  step = null,
+  stepLabel = '',
+  toolsAlreadyConnected = false,
   progress,
   error,
   errorCode,
@@ -131,6 +130,9 @@ function toState({
   isStalled = false,
 }: {
   phase: BootstrapPhase;
+  step?: BootstrapStep;
+  stepLabel?: string;
+  toolsAlreadyConnected?: boolean;
   progress: string;
   error: string | null;
   errorCode: BootstrapErrorCode;
@@ -140,13 +142,16 @@ function toState({
   const busy = isBusyPhase(phase);
   return {
     phase,
+    step,
+    stepLabel,
+    toolsAlreadyConnected,
     progress,
     error,
     errorCode,
     ready,
     isBusy: busy,
     isStalled: busy ? isStalled : false,
-    canCancel: CANCELLABLE_PHASES.has(phase),
+    canCancel: busy,
     canRetry: phase === 'error' || phase === 'cancelled',
   };
 }
@@ -233,44 +238,23 @@ export function useAuthBootstrap(
     }
   }, []);
 
-  const markStalled = useCallback((runId: number) => {
-    clearStallTimer();
-    stallTimerRef.current = setTimeout(() => {
-      if (runIdRef.current !== runId || !inFlightRef.current) {
-        return;
-      }
-      setState((prev) => {
-        if (!prev.isBusy || prev.isStalled) {
-          return prev;
+  const markStalled = useCallback(
+    (runId: number) => {
+      clearStallTimer();
+      stallTimerRef.current = setTimeout(() => {
+        if (runIdRef.current !== runId || !inFlightRef.current) {
+          return;
         }
-        return { ...prev, isStalled: true };
-      });
-    }, STALLED_HINT_MS);
-  }, [clearStallTimer]);
-
-  const setSigningIn = useCallback(() => {
-    setState(
-      toState({
-        phase: 'signing_in',
-        progress: 'Signing you in...',
-        error: null,
-        errorCode: null,
-        ready: null,
-      })
-    );
-  }, []);
-
-  const setError = useCallback((message: string) => {
-    setState(
-      toState({
-        phase: 'error',
-        progress: '',
-        error: message,
-        errorCode: 'unknown',
-        ready: null,
-      })
-    );
-  }, []);
+        setState((prev) => {
+          if (!prev.isBusy || prev.isStalled) {
+            return prev;
+          }
+          return { ...prev, isStalled: true };
+        });
+      }, STALLED_HINT_MS);
+    },
+    [clearStallTimer]
+  );
 
   const clearError = useCallback(() => {
     setState((prev) =>
@@ -279,6 +263,18 @@ export function useAuthBootstrap(
           prev.phase === 'error' || prev.phase === 'cancelled'
             ? 'idle'
             : prev.phase,
+        step:
+          prev.phase === 'error' || prev.phase === 'cancelled'
+            ? null
+            : prev.step,
+        stepLabel:
+          prev.phase === 'error' || prev.phase === 'cancelled'
+            ? ''
+            : prev.stepLabel,
+        toolsAlreadyConnected:
+          prev.phase === 'error' || prev.phase === 'cancelled'
+            ? false
+            : prev.toolsAlreadyConnected,
         progress:
           prev.phase === 'error' || prev.phase === 'cancelled'
             ? ''
@@ -300,7 +296,11 @@ export function useAuthBootstrap(
   }, [abortActiveRequest, clearStallTimer]);
 
   const fetchWithAbort = useCallback(
-    async (runId: number, url: string, init: RequestInit): Promise<Response> => {
+    async (
+      runId: number,
+      url: string,
+      init: RequestInit
+    ): Promise<Response> => {
       assertRunActive(runId);
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -321,26 +321,12 @@ export function useAuthBootstrap(
   const fetchBootstrapState = useCallback(
     async (
       runId: number,
-      accessToken: string,
-      runStartedAt: number
+      accessToken: string
     ): Promise<BootstrapApiResponse> => {
       if (!backendUrl) {
         throw new BootstrapFlowError('unknown', 'Backend URL is missing');
       }
       assertRunActive(runId);
-      setState(
-        toState({
-          phase: 'verifying_setup',
-          progress: 'Checking your account setup...',
-          error: null,
-          errorCode: null,
-          ready: null,
-        })
-      );
-      logWithMeta('BOOTSTRAP_FLOW', 'verify_start', {
-        request_id: runId,
-        phase: 'verifying_setup',
-      });
 
       const response = await fetchWithAbort(
         runId,
@@ -354,13 +340,11 @@ export function useAuthBootstrap(
       );
       assertRunActive(runId);
       if (!response.ok) {
-        throw new BootstrapFlowError('unknown', await readResponseError(response));
+        throw new BootstrapFlowError(
+          'unknown',
+          await readResponseError(response)
+        );
       }
-      logWithMeta('BOOTSTRAP_FLOW', 'verify_ok', {
-        request_id: runId,
-        phase: 'verifying_setup',
-        elapsed_ms: Date.now() - runStartedAt,
-      });
       return (await response.json()) as BootstrapApiResponse;
     },
     [assertRunActive, backendUrl, fetchWithAbort]
@@ -371,27 +355,13 @@ export function useAuthBootstrap(
       runId: number,
       accessToken: string,
       apps: string[],
-      runStartedAt: number
+      onAuthorizeApp?: (appName: string) => void
     ): Promise<void> => {
       if (!backendUrl) {
         throw new BootstrapFlowError('unknown', 'Backend URL is missing');
       }
 
       assertRunActive(runId);
-      setState(
-        toState({
-          phase: 'connecting_tools',
-          progress: 'Preparing app connections...',
-          error: null,
-          errorCode: null,
-          ready: null,
-        })
-      );
-      logWithMeta('BOOTSTRAP_FLOW', 'connect_start', {
-        request_id: runId,
-        phase: 'connecting_tools',
-        apps: apps.map((app) => app.toLowerCase()).join(','),
-      });
 
       const callbackUrl = Linking.createURL('composio/callback');
       const connectLinkResponse = await fetchWithAbort(
@@ -400,7 +370,7 @@ export function useAuthBootstrap(
         {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ redirect_url: callbackUrl }),
@@ -414,7 +384,8 @@ export function useAuthBootstrap(
         );
       }
 
-      const connectBody = (await connectLinkResponse.json()) as ConnectLinkResponse;
+      const connectBody =
+        (await connectLinkResponse.json()) as ConnectLinkResponse;
       const linksByApp = new Map(
         (connectBody.links ?? []).map((item) => [
           item.app.toLowerCase(),
@@ -432,22 +403,16 @@ export function useAuthBootstrap(
             `No OAuth link returned for ${appName}`
           );
         }
-
-        setState(
-          toState({
-            phase: 'connecting_tools',
-            progress: `Authorize ${appName}...`,
-            error: null,
-            errorCode: null,
-            ready: null,
-          })
-        );
+        onAuthorizeApp?.(appName);
 
         let authResult:
           | Awaited<ReturnType<typeof WebBrowser.openAuthSessionAsync>>
           | undefined;
         try {
-          authResult = await WebBrowser.openAuthSessionAsync(redirectUrl, callbackUrl);
+          authResult = await WebBrowser.openAuthSessionAsync(
+            redirectUrl,
+            callbackUrl
+          );
         } catch {
           await Linking.openURL(redirectUrl);
           throw new BootstrapFlowError(
@@ -463,32 +428,13 @@ export function useAuthBootstrap(
           );
         }
       }
-
-      logWithMeta('BOOTSTRAP_FLOW', 'connect_ok', {
-        request_id: runId,
-        phase: 'connecting_tools',
-        elapsed_ms: Date.now() - runStartedAt,
-      });
     },
     [assertRunActive, backendUrl, fetchWithAbort]
   );
 
   const requestMicrophonePermission = useCallback(
-    async (runId: number, runStartedAt: number): Promise<void> => {
+    async (runId: number): Promise<void> => {
       assertRunActive(runId);
-      setState(
-        toState({
-          phase: 'requesting_microphone',
-          progress: 'Requesting microphone permission...',
-          error: null,
-          errorCode: null,
-          ready: null,
-        })
-      );
-      logWithMeta('BOOTSTRAP_FLOW', 'mic_start', {
-        request_id: runId,
-        phase: 'requesting_microphone',
-      });
 
       const micPermission = await AudioStreamModule.requestPermissions();
       assertRunActive(runId);
@@ -498,36 +444,13 @@ export function useAuthBootstrap(
           'Microphone permission is required. Please allow it and tap continue.'
         );
       }
-
-      logWithMeta('BOOTSTRAP_FLOW', 'mic_ok', {
-        request_id: runId,
-        phase: 'requesting_microphone',
-        elapsed_ms: Date.now() - runStartedAt,
-      });
     },
     [assertRunActive]
   );
 
-  const requestNotificationPermissionAndSaveToken = useCallback(
-    async (
-      runId: number,
-      accessToken: string,
-      runStartedAt: number
-    ): Promise<void> => {
+  const requestNotificationPermission = useCallback(
+    async (runId: number): Promise<void> => {
       assertRunActive(runId);
-      setState(
-        toState({
-          phase: 'requesting_notifications',
-          progress: 'Requesting notification permission...',
-          error: null,
-          errorCode: null,
-          ready: null,
-        })
-      );
-      logWithMeta('BOOTSTRAP_FLOW', 'notif_start', {
-        request_id: runId,
-        phase: 'requesting_notifications',
-      });
 
       if (!Device.isDevice) {
         throw new BootstrapFlowError(
@@ -549,44 +472,45 @@ export function useAuthBootstrap(
           'Notification permission is required. Please allow it in Settings and tap continue.'
         );
       }
+    },
+    [assertRunActive]
+  );
 
-      if (backendUrl) {
-        try {
-          const tokenData = await Notifications.getExpoPushTokenAsync({
-            projectId: EXPO_PROJECT_ID,
-          });
-          assertRunActive(runId);
-          const saveTokenResponse = await fetchWithAbort(
-            runId,
-            `${backendUrl}/api/save-token`,
-            {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ token: tokenData.data }),
-            }
-          );
-          if (!saveTokenResponse.ok) {
-            console.warn(
-              '[BOOTSTRAP_FLOW] save_token_warn',
-              await readResponseError(saveTokenResponse)
-            );
-          }
-        } catch (error) {
-          if (isAbortError(error) || isStaleRunError(error)) {
-            throw error;
-          }
-          console.warn('[BOOTSTRAP_FLOW] save_token_warn', error);
-        }
+  const savePushTokenBestEffort = useCallback(
+    async (runId: number, accessToken: string): Promise<void> => {
+      if (!backendUrl) {
+        return;
       }
 
-      logWithMeta('BOOTSTRAP_FLOW', 'notif_ok', {
-        request_id: runId,
-        phase: 'requesting_notifications',
-        elapsed_ms: Date.now() - runStartedAt,
-      });
+      try {
+        const tokenData = await Notifications.getExpoPushTokenAsync({
+          projectId: EXPO_PROJECT_ID,
+        });
+        assertRunActive(runId);
+        const saveTokenResponse = await fetchWithAbort(
+          runId,
+          `${backendUrl}/api/save-token`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ token: tokenData.data }),
+          }
+        );
+        if (!saveTokenResponse.ok) {
+          console.warn(
+            '[BOOTSTRAP_FLOW] save_token_warn',
+            await readResponseError(saveTokenResponse)
+          );
+        }
+      } catch (error) {
+        if (isAbortError(error) || isStaleRunError(error)) {
+          throw error;
+        }
+        console.warn('[BOOTSTRAP_FLOW] save_token_warn', error);
+      }
     },
     [assertRunActive, backendUrl, fetchWithAbort]
   );
@@ -600,34 +524,128 @@ export function useAuthBootstrap(
     runIdRef.current = runId;
     inFlightRef.current = true;
     const runStartedAt = Date.now();
-    markStalled(runId);
+    let currentStep: Exclude<BootstrapStep, null> = 'bootstrap_check';
+    let currentStepStartedAt = runStartedAt;
+    let toolsAlreadyConnected = false;
+
+    const setRunningStep = (
+      step: Exclude<BootstrapStep, null>,
+      stepLabel: string
+    ) => {
+      if (runIdRef.current !== runId) {
+        return;
+      }
+      currentStep = step;
+      currentStepStartedAt = Date.now();
+      markStalled(runId);
+      setState(
+        toState({
+          phase: 'running',
+          step,
+          stepLabel,
+          toolsAlreadyConnected,
+          progress: stepLabel,
+          error: null,
+          errorCode: null,
+          ready: null,
+        })
+      );
+      logWithMeta('BOOTSTRAP_FLOW', 'setup_step_start', {
+        request_id: runId,
+        step,
+      });
+    };
+
+    const setRunningStepLabel = (
+      step: Exclude<BootstrapStep, null>,
+      stepLabel: string
+    ) => {
+      if (runIdRef.current !== runId) {
+        return;
+      }
+      markStalled(runId);
+      setState(
+        toState({
+          phase: 'running',
+          step,
+          stepLabel,
+          toolsAlreadyConnected,
+          progress: stepLabel,
+          error: null,
+          errorCode: null,
+          ready: null,
+        })
+      );
+    };
+
+    const markStepSuccess = (step: Exclude<BootstrapStep, null>) => {
+      logWithMeta('BOOTSTRAP_FLOW', 'setup_step_success', {
+        request_id: runId,
+        step,
+        elapsed_ms: Date.now() - currentStepStartedAt,
+      });
+    };
 
     try {
       if (!backendUrl) {
         throw new BootstrapFlowError('unknown', 'Backend URL is missing');
       }
+
+      setRunningStep('bootstrap_check', 'Checking your account setup...');
       const accessToken = await getAccessToken();
       assertRunActive(runId);
       if (!accessToken) {
         throw new BootstrapFlowError('unknown', 'Missing auth token');
       }
+      let bootstrapState = await fetchBootstrapState(runId, accessToken);
+      markStepSuccess('bootstrap_check');
 
-      let bootstrapState = await fetchBootstrapState(runId, accessToken, runStartedAt);
+      logWithMeta('BOOTSTRAP_FLOW', 'tools_check_start', {
+        request_id: runId,
+      });
       let missingApps = getMissingRequiredApps(bootstrapState.apps);
-      let connectAttempts = 0;
-      while (missingApps.length > 0) {
-        connectAttempts += 1;
-        await connectMissingApps(runId, accessToken, missingApps, runStartedAt);
-        bootstrapState = await fetchBootstrapState(runId, accessToken, runStartedAt);
-        missingApps = getMissingRequiredApps(bootstrapState.apps);
-        if (connectAttempts >= 3 && missingApps.length > 0) {
-          throw new BootstrapFlowError(
-            'unknown',
-            `Required app connections are still pending (${missingApps
-              .map((app) => formatAppName(app))
-              .join(', ')}). Tap retry to continue.`
+      if (missingApps.length === 0) {
+        toolsAlreadyConnected = true;
+        setRunningStep(
+          'tools_connect',
+          'Tools already connected. Continuing...'
+        );
+        logWithMeta('BOOTSTRAP_FLOW', 'tools_already_connected', {
+          request_id: runId,
+        });
+        markStepSuccess('tools_connect');
+      } else {
+        let connectAttempts = 0;
+        while (missingApps.length > 0) {
+          setRunningStep('tools_connect', 'Connecting required tools...');
+          connectAttempts += 1;
+          logWithMeta('BOOTSTRAP_FLOW', 'tools_connect_required', {
+            request_id: runId,
+            apps: missingApps.join(','),
+          });
+
+          await connectMissingApps(
+            runId,
+            accessToken,
+            missingApps,
+            (appName: string) => {
+              setRunningStepLabel('tools_connect', `Authorize ${appName}...`);
+            }
           );
+
+          setRunningStepLabel('tools_connect', 'Verifying tool connections...');
+          bootstrapState = await fetchBootstrapState(runId, accessToken);
+          missingApps = getMissingRequiredApps(bootstrapState.apps);
+          if (connectAttempts >= 3 && missingApps.length > 0) {
+            throw new BootstrapFlowError(
+              'unknown',
+              `Required app connections are still pending (${missingApps
+                .map((app) => formatAppName(app))
+                .join(', ')}). Tap retry to continue.`
+            );
+          }
         }
+        markStepSuccess('tools_connect');
       }
 
       if (bootstrapState.route_hint === 'connect_flow') {
@@ -646,12 +664,20 @@ export function useAuthBootstrap(
         );
       }
 
-      await requestMicrophonePermission(runId, runStartedAt);
-      await requestNotificationPermissionAndSaveToken(
-        runId,
-        accessToken,
-        runStartedAt
+      setRunningStep('mic_permission', 'Requesting microphone permission...');
+      await requestMicrophonePermission(runId);
+      markStepSuccess('mic_permission');
+
+      setRunningStep(
+        'notif_permission',
+        'Requesting notification permission...'
       );
+      await requestNotificationPermission(runId);
+      markStepSuccess('notif_permission');
+
+      setRunningStep('finalizing', 'Finalizing setup...');
+      await savePushTokenBestEffort(runId, accessToken);
+      markStepSuccess('finalizing');
       assertRunActive(runId);
 
       const readyResult: BootstrapResult = {
@@ -670,6 +696,9 @@ export function useAuthBootstrap(
       setState(
         toState({
           phase: 'ready',
+          step: null,
+          stepLabel: '',
+          toolsAlreadyConnected,
           progress: 'Setup complete. Tap below to continue.',
           error: null,
           errorCode: null,
@@ -685,6 +714,12 @@ export function useAuthBootstrap(
       }
 
       const normalized = normalizeErrorMessage(error);
+      logWithMeta('BOOTSTRAP_FLOW', 'setup_step_error', {
+        request_id: runId,
+        step: currentStep,
+        elapsed_ms: Date.now() - currentStepStartedAt,
+        reason: normalized.code,
+      });
       logWithMeta('BOOTSTRAP_FLOW', 'fail', {
         request_id: runId,
         phase: 'error',
@@ -697,6 +732,9 @@ export function useAuthBootstrap(
       setState(
         toState({
           phase: 'error',
+          step: currentStep,
+          stepLabel: '',
+          toolsAlreadyConnected,
           progress: '',
           error: normalized.message,
           errorCode: normalized.code,
@@ -718,7 +756,8 @@ export function useAuthBootstrap(
     getAccessToken,
     markStalled,
     requestMicrophonePermission,
-    requestNotificationPermissionAndSaveToken,
+    requestNotificationPermission,
+    savePushTokenBestEffort,
   ]);
 
   const cancelSetup = useCallback(() => {
@@ -782,8 +821,6 @@ export function useAuthBootstrap(
 
   return {
     state,
-    setSigningIn,
-    setError,
     clearError,
     resetState,
     startSetup,

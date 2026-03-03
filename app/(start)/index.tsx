@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
@@ -32,8 +32,6 @@ export default function StartScreen() {
   const { user, isLoading, signInWithGoogle, getAccessToken } = useAuth();
   const {
     state,
-    setSigningIn,
-    setError,
     clearError,
     resetState,
     startSetup,
@@ -41,10 +39,13 @@ export default function StartScreen() {
     retrySetup,
     recheckAfterForeground,
   } = useAuthBootstrap(backendUrl, getAccessToken);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) {
       resetState();
+      setAuthError(null);
     }
   }, [resetState, user]);
 
@@ -84,29 +85,38 @@ export default function StartScreen() {
       return;
     }
 
-    clearError();
     if (!user) {
+      if (isSigningIn) {
+        return;
+      }
       const signInStartedAt = Date.now();
+      setAuthError(null);
+      clearError();
+      setIsSigningIn(true);
       console.log('[AUTH_FLOW] sign_in_start');
-      setSigningIn();
       try {
         await signInWithGoogle();
         console.log(
-          `[AUTH_FLOW] sign_in_success duration_ms=${Date.now() - signInStartedAt}`
+          `[AUTH_FLOW] sign_in_success duration_ms=${
+            Date.now() - signInStartedAt
+          }`
         );
       } catch (error) {
         console.error('[AUTH_FLOW] sign_in_fail', error);
-        setError(normalizeErrorMessage(error));
-        return;
+        setAuthError(normalizeErrorMessage(error));
+      } finally {
+        setIsSigningIn(false);
       }
+      return;
     }
 
+    setAuthError(null);
+    clearError();
     await startSetup();
   }, [
     clearError,
     configurationError,
-    setError,
-    setSigningIn,
+    isSigningIn,
     signInWithGoogle,
     startSetup,
     state.phase,
@@ -126,30 +136,31 @@ export default function StartScreen() {
   }, []);
 
   const setupReady = state.phase === 'ready' && Boolean(state.ready);
-  const isBusy = isLoading || state.isBusy;
+  const isBusy = isLoading || state.isBusy || isSigningIn;
   const primaryDisabled = Boolean(configurationError) || isBusy || setupReady;
 
   const buttonText = !user
-    ? state.phase === 'signing_in'
+    ? isSigningIn
       ? 'Signing In...'
       : 'Sign In With Google'
-    : isBusy
-    ? 'Setting Up...'
+    : state.isBusy
+    ? 'Running setup...'
     : setupReady
     ? 'Setup Complete'
-    : 'Continue';
+    : 'Run setup';
 
-  const progressText =
+  const stepText =
     configurationError ||
-    state.progress ||
     (setupReady
       ? 'Setup complete. Tap below to start onboarding.'
-      : state.isStalled
-      ? 'Still working. You can wait or cancel and retry.'
-      : null) ||
-    (!user
+      : !user
       ? 'Sign in with Google to begin setup.'
-      : 'Continue to connect tools, grant permissions, and start onboarding.');
+      : state.stepLabel ||
+        'Tap Run setup to connect tools and grant permissions.');
+  const stalledHint = state.isStalled
+    ? 'Still working. You can wait or cancel and retry.'
+    : null;
+  const activeError = !configurationError ? authError || state.error : null;
 
   return (
     <View style={styles.container}>
@@ -225,11 +236,12 @@ export default function StartScreen() {
         </TouchableOpacity>
       ) : null}
 
-      <Text style={styles.progressText}>{progressText}</Text>
-
-      {state.error && !configurationError ? (
-        <Text style={styles.errorText}>{state.error}</Text>
+      <Text style={styles.progressText}>{stepText}</Text>
+      {stalledHint ? (
+        <Text style={styles.progressText}>{stalledHint}</Text>
       ) : null}
+
+      {activeError ? <Text style={styles.errorText}>{activeError}</Text> : null}
     </View>
   );
 }

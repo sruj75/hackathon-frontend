@@ -178,6 +178,41 @@ describe('useAuthBootstrap', () => {
       route: 'onboarding',
       resumeSessionId: 'session_123',
     });
+    expect(result.current.state.toolsAlreadyConnected).toBe(true);
+    expect(WebBrowser.openAuthSessionAsync).not.toHaveBeenCalled();
+  });
+
+  it('continues to ready when save-token request fails after notification grant', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'ok',
+          apps: connectedComposioApps(),
+          all_connected: true,
+          onboarding_status: 'completed',
+          route_hint: 'assistant',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: async () => 'save token unavailable',
+      });
+
+    const { result } = renderHook(() =>
+      useAuthBootstrap('http://localhost:8080', getAccessToken)
+    );
+
+    await act(async () => {
+      await result.current.startSetup();
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.phase).toBe('ready');
+    });
+    expect(result.current.state.ready).toEqual({ route: 'assistant' });
   });
 
   it('accepts iOS provisional notification authorization as granted', async () => {
@@ -433,5 +468,6 @@ describe('useAuthBootstrap', () => {
       route: 'onboarding',
       resumeSessionId: 'session_connect_required',
     });
+    expect(result.current.state.toolsAlreadyConnected).toBe(false);
   });
 });

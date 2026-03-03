@@ -7,7 +7,13 @@ import {
   Text,
 } from 'react-native';
 
-import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useState,
+  useRef,
+  useMemo,
+} from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import ControlBar from '../../components/assistant/ControlBar';
@@ -48,7 +54,9 @@ export default function AssistantScreen() {
   const entryModeParam = Array.isArray(params.entry_mode)
     ? params.entry_mode[0]
     : params.entry_mode;
-  const sourceParam = Array.isArray(params.source) ? params.source[0] : params.source;
+  const sourceParam = Array.isArray(params.source)
+    ? params.source[0]
+    : params.source;
   const eventIdParam = Array.isArray(params.event_id)
     ? params.event_id[0]
     : params.event_id;
@@ -152,9 +160,10 @@ export default function AssistantScreen() {
   );
   const pendingTurnCompleteRef = useRef(false);
   const streamingTextRef = useRef('');
-  const lastAgentMessageRef = useRef<{ text: string; timestamp: number } | null>(
-    null
-  );
+  const lastAgentMessageRef = useRef<{
+    text: string;
+    timestamp: number;
+  } | null>(null);
   const turnHasOutputTranscriptionRef = useRef(false);
   const hasPostOnboardingHandoffRef = useRef(false);
   const pendingPostOnboardingReconnectRef = useRef(false);
@@ -188,22 +197,25 @@ export default function AssistantScreen() {
     }, 220);
   }, [endPlayback]);
 
-  const mergeStreamingText = useCallback((current: string, incoming: string) => {
-    if (!incoming) {
-      return current;
-    }
-    if (!current) {
-      return incoming;
-    }
-    // Backends differ: some send deltas (" world"), others send full partials ("hello world").
-    if (incoming.startsWith(current)) {
-      return incoming;
-    }
-    if (current.endsWith(incoming)) {
-      return current;
-    }
-    return current + incoming;
-  }, []);
+  const mergeStreamingText = useCallback(
+    (current: string, incoming: string) => {
+      if (!incoming) {
+        return current;
+      }
+      if (!current) {
+        return incoming;
+      }
+      // Backends differ: some send deltas (" world"), others send full partials ("hello world").
+      if (incoming.startsWith(current)) {
+        return incoming;
+      }
+      if (current.endsWith(incoming)) {
+        return current;
+      }
+      return current + incoming;
+    },
+    []
+  );
 
   const handoffToMainAgent = useCallback(() => {
     if (hasPostOnboardingHandoffRef.current) {
@@ -244,11 +256,14 @@ export default function AssistantScreen() {
             trigger_type: triggerType as string,
             entry_mode: isStaleNotificationEntry
               ? 'reactive'
-              : (inferredEntryMode as 'proactive' | 'reactive' | 'post_onboarding'),
+              : (inferredEntryMode as
+                  | 'proactive'
+                  | 'reactive'
+                  | 'post_onboarding'),
             source: isStaleNotificationEntry
               ? 'manual'
-              : ((sourceParam as 'push' | 'manual' | 'post_onboarding') ||
-                'manual'),
+              : (sourceParam as 'push' | 'manual' | 'post_onboarding') ||
+                'manual',
             event_id: isStaleNotificationEntry
               ? undefined
               : (eventIdParam as string),
@@ -402,11 +417,7 @@ export default function AssistantScreen() {
       }
       const now = Date.now();
       const last = lastAgentMessageRef.current;
-      if (
-        last &&
-        last.text === normalizedText &&
-        now - last.timestamp < 1500
-      ) {
+      if (last && last.text === normalizedText && now - last.timestamp < 1500) {
         return;
       }
       addTranscription('Agent', normalizedText);
@@ -466,9 +477,7 @@ export default function AssistantScreen() {
       // Handle text responses (Chat Mode) - with streaming support
       if (event.content?.parts) {
         let shouldHandoffToMain = false;
-        for (const part of event.content.parts as Array<
-          Record<string, unknown>
-        >) {
+        for (const part of event.content.parts as Record<string, unknown>[]) {
           const functionResponse = part.functionResponse as
             | {
                 name?: string;
@@ -484,7 +493,8 @@ export default function AssistantScreen() {
           const handoffToMain = Boolean(response.handoff_to_main);
           if (
             (handoffToMain ||
-              (onboardingStatus === 'completed' && routeHint === 'assistant')) &&
+              (onboardingStatus === 'completed' &&
+                routeHint === 'assistant')) &&
             triggerType === 'onboarding'
           ) {
             shouldHandoffToMain = true;
@@ -528,7 +538,10 @@ export default function AssistantScreen() {
                 hasAudioPart ||
                 turnHasOutputTranscriptionRef.current ||
                 hadStreamingText;
-              if (isConversationalText && !turnHasOutputTranscriptionRef.current) {
+              if (
+                isConversationalText &&
+                !turnHasOutputTranscriptionRef.current
+              ) {
                 addAgentTranscription(finalText);
               }
             }
@@ -545,7 +558,10 @@ export default function AssistantScreen() {
         setAwaitingInitialGreeting(false);
         pendingTurnCompleteRef.current = true;
         schedulePlaybackEnd();
-        if (streamingTextRef.current && !turnHasOutputTranscriptionRef.current) {
+        if (
+          streamingTextRef.current &&
+          !turnHasOutputTranscriptionRef.current
+        ) {
           addAgentTranscription(streamingTextRef.current);
         }
         streamingTextRef.current = '';

@@ -1,16 +1,32 @@
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 export default function ComposioCallbackScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    status?: string;
+    error?: string;
+    app?: string;
+  }>();
 
   useEffect(() => {
+    const status =
+      typeof params.status === 'string' ? params.status : 'unknown';
+    const error = typeof params.error === 'string' ? params.error : undefined;
+    const app = typeof params.app === 'string' ? params.app : undefined;
+    console.log('[BOOTSTRAP_FLOW] composio_callback', {
+      status,
+      app,
+      has_error: Boolean(error),
+      error,
+    });
+
     const timer = setTimeout(() => {
       router.replace('/');
     }, 10);
     return () => clearTimeout(timer);
-  }, [router]);
+  }, [params.app, params.error, params.status, router]);
 
   return (
     <View style={styles.container}>
