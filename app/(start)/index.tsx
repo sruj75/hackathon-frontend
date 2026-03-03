@@ -50,6 +50,13 @@ export default function StartScreen() {
   }, [resetState, user]);
 
   useEffect(() => {
+    // If session appears while OAuth promise is still settling, unblock UI.
+    if (user && isSigningIn) {
+      setIsSigningIn(false);
+    }
+  }, [isSigningIn, user]);
+
+  useEffect(() => {
     const subscription = AppState.addEventListener('change', (status) => {
       if (status === 'active' && user) {
         void recheckAfterForeground();
@@ -136,13 +143,14 @@ export default function StartScreen() {
   }, []);
 
   const setupReady = state.phase === 'ready' && Boolean(state.ready);
-  const isBusy = isLoading || state.isBusy || isSigningIn;
+  const authBootstrapping = isLoading && !user;
+  const isBusy = authBootstrapping || state.isBusy || isSigningIn;
   const primaryDisabled = Boolean(configurationError) || isBusy || setupReady;
 
-  const buttonText = !user
-    ? isSigningIn
-      ? 'Signing In...'
-      : 'Sign In With Google'
+  const buttonText = isSigningIn
+    ? 'Signing In...'
+    : !user
+    ? 'Sign In With Google'
     : state.isBusy
     ? 'Running setup...'
     : setupReady

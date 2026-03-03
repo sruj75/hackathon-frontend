@@ -118,6 +118,39 @@ describe('StartScreen bootstrap regressions', () => {
     });
   });
 
+  it('clears sign-in loading state when user session appears before sign-in promise resolves', async () => {
+    let resolveSignIn: (() => void) | undefined;
+    mockSignIn.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSignIn = resolve;
+        })
+    );
+
+    const { getByText, rerender, queryByText } = render(<StartScreen />);
+    fireEvent.press(getByText('Sign In With Google'));
+
+    await waitFor(() => {
+      expect(getByText('Signing In...')).toBeTruthy();
+    });
+
+    mockUser = { id: 'user_test' };
+    rerender(<StartScreen />);
+
+    await waitFor(() => {
+      expect(getByText('Run setup')).toBeTruthy();
+      expect(queryByText('Signing In...')).toBeNull();
+    });
+
+    if (!resolveSignIn) {
+      throw new Error('Sign-in resolver should be assigned');
+    }
+    resolveSignIn();
+    await waitFor(() => {
+      expect(mockSignIn).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('shows Start onboarding agent and does not auto-route when ready for onboarding', () => {
     mockUser = { id: 'user_test' };
     mockBootstrapState = {
