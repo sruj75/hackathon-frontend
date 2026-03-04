@@ -43,6 +43,8 @@ interface Transcription {
 
 type ViewMode = 'voice' | 'chat' | 'ui';
 const PLAYBACK_END_DEBOUNCE_MS_ONBOARDING = 900;
+const ONBOARDING_SPEECH_HOLD_MS = 800;
+const ONBOARDING_STRONG_SPEECH_RMS_THRESHOLD = 0.02;
 const ECHO_GUARD_TAIL_MS = 250;
 const BARGE_IN_OPEN_WINDOW_MS = 1200;
 const BARGE_IN_MIN_CONSECUTIVE_FRAMES = 4;
@@ -272,12 +274,14 @@ export default function AssistantScreen() {
     maxInputChunkGapMs: 0,
   });
   const echoGuardUntilMsRef = useRef(0);
+  const lastStrongUserSpeechAtMsRef = useRef(0);
   const bargeInActiveUntilMsRef = useRef(0);
   const playbackRmsEmaRef = useRef(0);
   const micNoiseRmsEmaRef = useRef(0.01);
   const bargeInConsecutiveFramesRef = useRef(0);
   const echoGuardDropCountRef = useRef(0);
   const bargeInTriggerCountRef = useRef(0);
+  const onboardingSpeechHoldSuppressedChunkCountRef = useRef(0);
   const playbackEndDebounceMs = PLAYBACK_END_DEBOUNCE_MS_ONBOARDING;
   const logOnboardingAudio = useCallback(
     (event: string, payload: Record<string, unknown> = {}) => {
@@ -539,12 +543,14 @@ export default function AssistantScreen() {
       diagnostics.lastInputChunkAtMs = null;
       diagnostics.maxInputChunkGapMs = 0;
       echoGuardUntilMsRef.current = 0;
+      lastStrongUserSpeechAtMsRef.current = 0;
       bargeInActiveUntilMsRef.current = 0;
       playbackRmsEmaRef.current = 0;
       micNoiseRmsEmaRef.current = 0.01;
       bargeInConsecutiveFramesRef.current = 0;
       echoGuardDropCountRef.current = 0;
       bargeInTriggerCountRef.current = 0;
+      onboardingSpeechHoldSuppressedChunkCountRef.current = 0;
       logOnboardingAudio('ws_connected', {
         ws_connected_at_ms: diagnostics.wsConnectedAtMs,
       });
@@ -566,6 +572,8 @@ export default function AssistantScreen() {
         input_chunk_seen_count: diagnostics.inputChunkSeenCount,
         input_chunk_sent_count: diagnostics.inputChunkSentCount,
         max_input_chunk_gap_ms: diagnostics.maxInputChunkGapMs,
+        speech_hold_suppressed_chunk_count:
+          onboardingSpeechHoldSuppressedChunkCountRef.current,
       });
       diagnostics.wsConnectedAtMs = null;
       diagnostics.recordingStartedAtMs = null;
@@ -584,12 +592,14 @@ export default function AssistantScreen() {
       diagnostics.lastInputChunkAtMs = null;
       diagnostics.maxInputChunkGapMs = 0;
       echoGuardUntilMsRef.current = 0;
+      lastStrongUserSpeechAtMsRef.current = 0;
       bargeInActiveUntilMsRef.current = 0;
       playbackRmsEmaRef.current = 0;
       micNoiseRmsEmaRef.current = 0.01;
       bargeInConsecutiveFramesRef.current = 0;
       echoGuardDropCountRef.current = 0;
       bargeInTriggerCountRef.current = 0;
+      onboardingSpeechHoldSuppressedChunkCountRef.current = 0;
     }
   }, [isOnboardingSession, wsState.isConnected, logOnboardingAudio]);
 
@@ -646,6 +656,8 @@ export default function AssistantScreen() {
             onboardingDiagnosticsRef.current.inputChunkSeenCount,
           input_chunk_sent_count:
             onboardingDiagnosticsRef.current.inputChunkSentCount,
+          speech_hold_suppressed_chunk_count:
+            onboardingSpeechHoldSuppressedChunkCountRef.current,
         });
       }
       if (endPlaybackTimerRef.current) {
@@ -689,6 +701,10 @@ export default function AssistantScreen() {
       const diagnostics = onboardingDiagnosticsRef.current;
       const now = Date.now();
       const micRms = pcm16RmsFromArrayBuffer(data);
+      const hasStrongUserSpeech = micRms >= ONBOARDING_STRONG_SPEECH_RMS_THRESHOLD;
+      if (isOnboardingSession && hasStrongUserSpeech) {
+        lastStrongUserSpeechAtMsRef.current = now;
+      }
       if (isOnboardingSession) {
         diagnostics.inputChunkSeenCount += 1;
         if (diagnostics.lastInputChunkAtMs !== null) {
@@ -812,6 +828,33 @@ export default function AssistantScreen() {
       // View mode should affect layout, not whether the user hears the assistant.
       if (wsState.isConnected) {
         const now = Date.now();
+        if (isOnboardingSession) {
+          const lastStrongUserSpeechAtMs = lastStrongUserSpeechAtMsRef.current;
+          const msSinceStrongUserSpeech =
+            lastStrongUserSpeechAtMs > 0
+              ? now - lastStrongUserSpeechAtMs
+              : null;
+          const withinSpeechHoldWindow =
+            msSinceStrongUserSpeech !== null &&
+            msSinceStrongUserSpeech >= 0 &&
+            msSinceStrongUserSpeech <= ONBOARDING_SPEECH_HOLD_MS;
+          if (withinSpeechHoldWindow) {
+            onboardingSpeechHoldSuppressedChunkCountRef.current += 1;
+            if (
+              onboardingSpeechHoldSuppressedChunkCountRef.current === 1 ||
+              onboardingSpeechHoldSuppressedChunkCountRef.current % 20 === 0
+            ) {
+              logOnboardingAudio('speech_hold_suppress_assistant_audio', {
+                suppressed_chunk_count:
+                  onboardingSpeechHoldSuppressedChunkCountRef.current,
+                ms_since_strong_user_speech: msSinceStrongUserSpeech,
+                hold_window_ms: ONBOARDING_SPEECH_HOLD_MS,
+                mime_type: mimeType || null,
+              });
+            }
+            return;
+          }
+        }
         let gapMs: number | null = null;
         outputAudioChunkCountRef.current += 1;
         turnHasAudioChunkRef.current = true;
@@ -996,6 +1039,9 @@ export default function AssistantScreen() {
 
       // Handle input transcription (user speech)
       if (event.serverContent?.inputTranscription?.text) {
+        if (isOnboardingSession) {
+          lastStrongUserSpeechAtMsRef.current = Date.now();
+        }
         if (isOnboardingSession) {
           const diagnostics = onboardingDiagnosticsRef.current;
           logOnboardingAudio('input_transcription', {

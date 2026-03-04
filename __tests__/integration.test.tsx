@@ -323,6 +323,77 @@ describe('Assistant screen integration', () => {
     expect(mockSendAudio).not.toHaveBeenCalled();
   });
 
+  it('suppresses onboarding assistant audio while user speech hold is active', () => {
+    jest.useFakeTimers();
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+    expect(audioDataHandler).not.toBeNull();
+    expect(audioHandler).not.toBeNull();
+
+    act(() => {
+      audioDataHandler?.(createPcm16Buffer(12000));
+    });
+    act(() => {
+      audioHandler?.('AQID', 'audio/pcm;rate=16000');
+    });
+
+    expect(mockPlayAudio).not.toHaveBeenCalled();
+  });
+
+  it('resumes onboarding assistant audio playback after speech hold expires', () => {
+    jest.useFakeTimers();
+    mockParams = {
+      trigger_type: 'onboarding',
+    };
+    mockWsState = { isConnected: true, isConnecting: false, error: null };
+    mockUseWebSocketAgent.mockReturnValue({
+      state: mockWsState,
+      connect: mockConnect,
+      disconnect: mockDisconnect,
+      sendAudio: mockSendAudio,
+      sendText: mockSendText,
+      onEvent: mockOnEvent,
+      onAudio: mockOnAudio,
+      onUIComponent: mockOnUIComponent,
+    });
+
+    render(<AssistantScreen />);
+    expect(audioDataHandler).not.toBeNull();
+    expect(audioHandler).not.toBeNull();
+
+    act(() => {
+      audioDataHandler?.(createPcm16Buffer(12000));
+    });
+    act(() => {
+      audioHandler?.('AQID', 'audio/pcm;rate=16000');
+    });
+    expect(mockPlayAudio).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(850);
+    });
+    act(() => {
+      audioHandler?.('BAUG', 'audio/pcm;rate=16000');
+    });
+
+    expect(mockPlayAudio).toHaveBeenCalledTimes(1);
+    expect(mockPlayAudio).toHaveBeenCalledWith('BAUG', 'audio/pcm;rate=16000');
+  });
+
   it('opens onboarding barge-in path after strong speech during playback', async () => {
     mockParams = {
       trigger_type: 'onboarding',
